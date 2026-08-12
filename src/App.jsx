@@ -10,6 +10,8 @@ const TC = { Fondo: "#60a5fa", ETF: "#a78bfa", "Acción": "#f472b6", Crypto: "#f
 const MAX_JUMP = 2;
 const ME = "#34d399";
 const CLC = "#fbbf24";
+const MSC = "#60a5fa";
+const EMG = "#f472b6";
 // Cabecera de grupo (superclase) y separador entre grupos en la tabla mensual
 const GH = { textAlign: "center", cursor: "default", color: "#94a3b8", borderBottom: "1px solid rgba(148,163,184,.12)" };
 const GSEP = { borderLeft: "1px solid rgba(148,163,184,.14)" };
@@ -24,37 +26,63 @@ function enrichFM(raw) {
     cM += m.apMsci; cE += m.apEm; cC += m.apClaseC;
     const cME = cM + cE;
     const effC = m.carteraC > 0 ? m.carteraC : (cC > 0 ? cC : 0);
-    const gME = m.carteraME > 0 ? m.carteraME - cME : 0;
+    // Valor por fondo: solo si se ha registrado. Si están a 0 no se puede
+    // desglosar el combinado, así que la rentabilidad separada queda vacía.
+    const vMsci = m.carteraMsci > 0 ? m.carteraMsci : 0;
+    const vEm = m.carteraEm > 0 ? m.carteraEm : 0;
+    // El combinado se sigue tomando de cartera_msci_em; si no está, se suman los dos fondos
+    const effME = m.carteraME > 0 ? m.carteraME : vMsci + vEm;
+    const gM = vMsci > 0 && cM > 0 ? vMsci - cM : 0;
+    const gE = vEm > 0 && cE > 0 ? vEm - cE : 0;
+    const gME = effME > 0 ? effME - cME : 0;
     const gC = effC > 0 && cC > 0 ? effC - cC : 0;
-    const rME = cME > 0 && m.carteraME > 0 ? (gME / cME) * 100 : 0;
+    const rM = cM > 0 && vMsci > 0 ? (gM / cM) * 100 : 0;
+    const rE = cE > 0 && vEm > 0 ? (gE / cE) * 100 : 0;
+    const rME = cME > 0 && effME > 0 ? (gME / cME) * 100 : 0;
     const rC = cC > 0 && effC > 0 ? (gC / cC) * 100 : 0;
-    return { ...m, cM, cE, cC, cME, effC, gME, gC, gT: gME + gC, rME, rC };
+    return { ...m, cM, cE, cC, cME, vMsci, vEm, effME, effC, gM, gE, gME, gC, gT: gME + gC, rM, rE, rME, rC };
   });
 }
 
-// Los fondos de RV del plan mensual llevan su aportación real en "Fondos Mensual";
-// ese acumulado manda sobre el campo manual del activo.
-const FM_ACUM = {
-  "IE00BYX5NX33|MyInvestor": "cM", // Fidelity MSCI World Index
-  "IE00BYX5M476|MyInvestor": "cE", // Fidelity Emerging Markets
-  "ES0165243025|MyInvestor": "cC", // MyInvestor Value Clase C
+// Fondos del plan mensual: su aportado y su valor los manda "Fondos Mensual",
+// no el campo manual del activo ni la cotización de Yahoo (que no cubre bien
+// los fondos de inversión). Si el dato mensual está a 0, se usa el del activo.
+const FM_FUNDS = {
+  "IE00BYX5NX33|MyInvestor": { ap: "cM", val: "vMsci" }, // Fidelity MSCI World Index
+  "IE00BYX5M476|MyInvestor": { ap: "cE", val: "vEm" },   // Fidelity Emerging Markets
+  "ES0165243025|MyInvestor": { ap: "cC", val: "effC" },  // MyInvestor Value Clase C
 };
 
 function enrichAssets(assets, efm) {
   const last = efm.length ? efm[efm.length - 1] : null;
   if (!last) return assets;
   return assets.map(a => {
-    const k = FM_ACUM[a.ticker + "|" + a.platform];
-    const ap = k ? last[k] : 0;
-    if (!ap || ap <= 0) return a;
-    const ge = Math.round((a.valorActual - ap) * 100) / 100;
-    return { ...a, aportado: ap, gananciaEur: ge, gananciaPct: Math.round((ge / ap) * 10000) / 100, apFM: true };
+    const k = FM_FUNDS[a.ticker + "|" + a.platform];
+    if (!k) return a;
+    const apFM = last[k.ap] > 0, valFM = last[k.val] > 0;
+    if (!apFM && !valFM) return a;
+    const ap = apFM ? last[k.ap] : a.aportado;
+    const va = valFM ? last[k.val] : a.valorActual;
+    const ge = Math.round((va - ap) * 100) / 100;
+    return { ...a, aportado: ap, valorActual: va, gananciaEur: ge, gananciaPct: ap > 0 ? Math.round((ge / ap) * 10000) / 100 : 0, apFM, valFM };
   });
 }
 
 function useSort(dk, dd) {
   const [sk, setSk] = useState(dk); const [sd, setSd] = useState(dd);
   return { toggle: k => { if (sk === k) setSd(-sd); else { setSk(k); setSd(1); } }, arrow: k => sk === k ? (sd === 1 ? " ▲" : " ▼") : "", sortFn: (a, b) => { const va = a[sk] ?? 0, vb = b[sk] ?? 0; return typeof va === "string" ? va.localeCompare(vb) * sd : (va - vb) * sd; } };
+}
+
+// Celda de rentabilidad: ganancia arriba y porcentaje debajo, para no ensanchar la tabla
+function RentCell({ g, r, on, tint, sep, bold }) {
+  const st = { fontFamily: "monospace", background: tint + "08", ...(sep ? GSEP : null) };
+  if (!on) return <td style={{ ...st, color: "#374151" }}>—</td>;
+  return (
+    <td style={{ ...st, color: rc(g), whiteSpace: "nowrap" }}>
+      <div style={{ fontWeight: bold ? 600 : 400 }}>{fE(g)}</div>
+      <div style={{ fontSize: 9, opacity: .75 }}>{fP(r)}</div>
+    </td>
+  );
 }
 
 function F({ l, children }) { return <div style={{ marginBottom: 4 }}><label style={{ fontSize: 10, color: "#4b5563", display: "block", marginBottom: 2 }}>{l}</label>{children}</div>; }
@@ -166,12 +194,19 @@ export default function App({ session }) {
     catch (e) { alert("Error eliminando mes: " + e.message); }
   }
 
+  const efm = useMemo(() => enrichFM(fm), [fm]);
+  // Vista de activos con el aportado y el valor de los fondos mensuales ya aplicados
+  const av = useMemo(() => enrichAssets(assets, efm), [assets, efm]);
+
   const fetchQuotes = useCallback(async () => {
     if (!assets.length) return;
     setFetching(true);
     setQuoteMsg(null);
     try {
-      const items = assets.map(a => ({ id: a.id, ticker: a.ticker, name: a.name, type: a.type }));
+      // Los fondos cuyo valor sale de Fondos Mensual no se consultan: Yahoo no los
+      // cotiza de forma fiable y su valor no se mostraría de todas formas.
+      const managed = new Set(av.filter(a => a.valFM).map(a => a.id));
+      const items = assets.filter(a => !managed.has(a.id)).map(a => ({ id: a.id, ticker: a.ticker, name: a.name, type: a.type }));
       const res = await fetch("/api/quotes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -185,6 +220,7 @@ export default function App({ session }) {
       let ok = 0, fail = 0;
       const bad = [];
       const updated = assets.map(a => {
+        if (managed.has(a.id)) return a;
         const r = results.find(x => x.id === a.id);
         if (!r || !r.price || r.price <= 0) { fail++; return a; }
         // Un precio en otra divisa significa que Yahoo devolvió un homónimo de otra bolsa
@@ -204,6 +240,7 @@ export default function App({ session }) {
       setLastUp(new Date().toLocaleString("es-ES"));
       setQuoteMsg([
         `${ok} activos actualizados`,
+        managed.size ? `${managed.size} desde Fondos Mensual` : null,
         bad.length ? `${bad.length} descartados por precio anómalo (${bad.join(", ")})` : null,
         fail ? `${fail} sin datos (edítalos a mano)` : null,
       ].filter(Boolean).join(" · "));
@@ -212,11 +249,8 @@ export default function App({ session }) {
       setQuoteMsg("Error al actualizar: " + e.message);
     }
     setFetching(false);
-  }, [assets]);
+  }, [assets, av]);
 
-  const efm = useMemo(() => enrichFM(fm), [fm]);
-  // Vista de activos con el aportado de los fondos mensuales ya aplicado
-  const av = useMemo(() => enrichAssets(assets, efm), [assets, efm]);
   const tI = useMemo(() => av.reduce((s, a) => s + a.aportado, 0), [av]);
   const tV = useMemo(() => av.reduce((s, a) => s + a.valorActual, 0), [av]);
   const tG = tV - tI;
@@ -266,7 +300,7 @@ function KPICard({ label, labelColor, value, gain, pct, invested }) {
 }
 
 function Dash({ assets, plats, byType, byCat, tI, tV, tG, efm, fe, fq, lu, qmsg }) {
-  const cd = efm.filter(m => m.cME > 0).map(m => ({ label: fMN(m.month), aportado: m.cME + m.cC, cartera: m.carteraME + m.effC }));
+  const cd = efm.filter(m => m.cME > 0).map(m => ({ label: fMN(m.month), aportado: m.cME + m.cC, cartera: m.effME + m.effC }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="cd" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", flexWrap: "wrap", gap: 8 }}>
@@ -327,7 +361,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
   const [sh, setSh] = useState(false); const [eId, setEId] = useState(null);
   const [f, sF] = useState({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "" });
   const s = useSort("name", 1); const sorted = [...assets].sort(s.sortFn);
-  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual), apFM: !!a.apFM }); setSh(true); }
+  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual), apFM: !!a.apFM, valFM: !!a.valFM }); setSh(true); }
   async function save() { const ap = parseFloat(f.aportado) || 0; const va = parseFloat(f.valorActual) || 0; await saveAsset({ id: eId || ("temp-" + Date.now()), name: f.name, ticker: f.ticker, platform: f.platform, type: f.type, category: f.category, participaciones: parseFloat(f.participaciones) || 0, costeMedio: parseFloat(f.costeMedio) || 0, aportado: ap, valorActual: va, gananciaEur: va - ap, gananciaPct: ap > 0 ? ((va - ap) / ap) * 100 : 0 }); sF({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "" }); setEId(null); setSh(false); }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -390,7 +424,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <F l={f.apFM ? "Aportado (€) — de Fondos Mensual" : "Aportado (€)"}><input className="ip" type="number" step="0.01" value={f.aportado} disabled={f.apFM} onChange={e => sF({ ...f, aportado: e.target.value })} /></F>
-          <F l="Valor Actual (€)"><input className="ip" type="number" step="0.01" value={f.valorActual} onChange={e => sF({ ...f, valorActual: e.target.value })} /></F>
+          <F l={f.valFM ? "Valor Actual (€) — de Fondos Mensual" : "Valor Actual (€)"}><input className="ip" type="number" step="0.01" value={f.valorActual} disabled={f.valFM} onChange={e => sF({ ...f, valorActual: e.target.value })} /></F>
         </div>
         <div style={{ display: "flex", gap: 6 }}><button className="bp" style={{ flex: 1 }} onClick={save}>Guardar</button><button className="bs" onClick={() => { setSh(false); setEId(null); }}>Cancelar</button></div>
       </Modal>}
@@ -400,46 +434,57 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
 
 function FondosM({ fm, efm, saveFM, removeFM }) {
   const [sh, setSh] = useState(false); const [eMonth, setEMonth] = useState(null);
-  const [f, sF] = useState({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraME: "", carteraC: "" });
-  function openEdit(m) { setEMonth(m.month); sF({ month: m.month, apMsci: String(m.apMsci), apEm: String(m.apEm), apClaseC: String(m.apClaseC), carteraME: String(m.carteraME), carteraC: String(m.carteraC) }); setSh(true); }
-  async function saveM() { if (!f.month) return; const existing = fm.find(m => m.month === f.month); await saveFM({ id: existing?.id, month: f.month, apMsci: parseFloat(f.apMsci) || 0, apEm: parseFloat(f.apEm) || 0, apClaseC: parseFloat(f.apClaseC) || 0, carteraME: parseFloat(f.carteraME) || 0, carteraC: parseFloat(f.carteraC) || 0 }); setEMonth(null); setSh(false); sF({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraME: "", carteraC: "" }); }
+  const [f, sF] = useState({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraMsci: "", carteraEm: "", carteraME: "", carteraC: "" });
+  function openEdit(m) { setEMonth(m.month); sF({ month: m.month, apMsci: String(m.apMsci), apEm: String(m.apEm), apClaseC: String(m.apClaseC), carteraMsci: String(m.carteraMsci), carteraEm: String(m.carteraEm), carteraME: String(m.carteraME), carteraC: String(m.carteraC) }); setSh(true); }
+  async function saveM() { if (!f.month) return; const existing = fm.find(m => m.month === f.month); await saveFM({ id: existing?.id, month: f.month, apMsci: parseFloat(f.apMsci) || 0, apEm: parseFloat(f.apEm) || 0, apClaseC: parseFloat(f.apClaseC) || 0, carteraMsci: parseFloat(f.carteraMsci) || 0, carteraEm: parseFloat(f.carteraEm) || 0, carteraME: parseFloat(f.carteraME) || 0, carteraC: parseFloat(f.carteraC) || 0 }); setEMonth(null); setSh(false); sF({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraMsci: "", carteraEm: "", carteraME: "", carteraC: "" }); }
+  // Si se rellenan MSCI y Emerg. por separado, el combinado sale de sumarlos
+  const autoME = (parseFloat(f.carteraMsci) || 0) + (parseFloat(f.carteraEm) || 0);
+  const manME = parseFloat(f.carteraME) || 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Fondos — Mensual</h2>
-        <button className="bp" onClick={() => { setEMonth(null); sF({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraME: "", carteraC: "" }); setSh(true); }}>+ Mes</button>
+        <button className="bp" onClick={() => { setEMonth(null); sF({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraMsci: "", carteraEm: "", carteraME: "", carteraC: "" }); setSh(true); }}>+ Mes</button>
       </div>
       <div className="cd" style={{ padding: 0 }}>
         <div className="rtable"><table><thead>
           <tr>
             <th rowSpan={2} style={{ verticalAlign: "bottom", cursor: "default" }}>Mes</th>
             <th colSpan={3} style={GH}>Aportación Mensual</th>
-            <th colSpan={2} style={{ ...GH, ...GSEP, background: ME + "10" }}>Suma de aportaciones</th>
-            <th colSpan={2} style={{ ...GH, ...GSEP }}>Rentabilidad</th>
+            <th colSpan={4} style={{ ...GH, ...GSEP }}>Suma de aportaciones</th>
+            <th colSpan={4} style={{ ...GH, ...GSEP }}>Rentabilidad</th>
             <th rowSpan={2} />
           </tr>
           <tr>
-            <th style={{ color: "#60a5fa" }}>MSCI</th>
-            <th style={{ color: "#f472b6" }}>EMERG.</th>
+            <th style={{ color: MSC }}>MSCI</th>
+            <th style={{ color: EMG }}>EMERG.</th>
             <th style={{ color: CLC }}>Clase C</th>
-            <th style={{ ...GSEP, background: ME + "15", color: ME }}>MSCI+EMERG.</th>
-            <th style={{ background: CLC + "15", color: CLC }}>Clase C</th>
-            <th style={{ ...GSEP, background: ME + "15", color: ME }}>MSCI+EMERG.</th>
-            <th style={{ background: CLC + "15", color: CLC }}>Clase C</th>
+            <th style={{ ...GSEP, background: MSC + "12", color: MSC }}>MSCI</th>
+            <th style={{ background: EMG + "12", color: EMG }}>EMERG.</th>
+            <th style={{ background: CLC + "12", color: CLC }}>Clase C</th>
+            <th style={{ background: ME + "15", color: ME }}>MSCI+EMERG.</th>
+            <th style={{ ...GSEP, background: MSC + "12", color: MSC }}>MSCI</th>
+            <th style={{ background: EMG + "12", color: EMG }}>EMERG.</th>
+            <th style={{ background: CLC + "12", color: CLC }}>Clase C</th>
+            <th style={{ background: ME + "15", color: ME }}>MSCI+EMERG.</th>
           </tr>
         </thead><tbody>
           {efm.map(m => {
-            if (m.cME === 0 && m.carteraME === 0) return null;
+            if (m.cME === 0 && m.effME === 0) return null;
             return (
               <tr key={m.month} style={{ cursor: "pointer" }} onClick={() => openEdit(m)}>
                 <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fMN(m.month)}</td>
-                <td style={{ fontFamily: "monospace", color: "#60a5fa" }}>{m.apMsci > 0 ? fE(m.apMsci) : "—"}</td>
-                <td style={{ fontFamily: "monospace", color: "#f472b6" }}>{m.apEm > 0 ? fE(m.apEm) : "—"}</td>
+                <td style={{ fontFamily: "monospace", color: MSC }}>{m.apMsci > 0 ? fE(m.apMsci) : "—"}</td>
+                <td style={{ fontFamily: "monospace", color: EMG }}>{m.apEm > 0 ? fE(m.apEm) : "—"}</td>
                 <td style={{ fontFamily: "monospace", color: CLC }}>{m.apClaseC > 0 ? fE(m.apClaseC) : "—"}</td>
-                <td style={{ ...GSEP, fontFamily: "monospace", fontWeight: 600, background: ME + "08" }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</td>
-                <td style={{ fontFamily: "monospace", fontWeight: 600, color: CLC, background: CLC + "08" }}>{m.effC > 0 ? fE(m.effC) : "—"}</td>
-                <td style={{ ...GSEP, fontFamily: "monospace", background: ME + "08", color: rc(m.gME) }}>{m.carteraME > 0 ? fE(m.gME) + " (" + fP(m.rME) + ")" : "—"}</td>
-                <td style={{ fontFamily: "monospace", background: CLC + "08", color: m.effC > 0 ? rc(m.gC) : "#374151" }}>{m.effC > 0 && m.cC > 0 ? fE(m.gC) + " (" + fP(m.rC) + ")" : "—"}</td>
+                <td style={{ ...GSEP, fontFamily: "monospace", color: MSC, background: MSC + "08" }}>{m.cM > 0 ? fE(m.cM) : "—"}</td>
+                <td style={{ fontFamily: "monospace", color: EMG, background: EMG + "08" }}>{m.cE > 0 ? fE(m.cE) : "—"}</td>
+                <td style={{ fontFamily: "monospace", color: CLC, background: CLC + "08" }}>{m.cC > 0 ? fE(m.cC) : "—"}</td>
+                <td style={{ fontFamily: "monospace", fontWeight: 600, background: ME + "08" }}>{m.cME > 0 ? fE(m.cME) : "—"}</td>
+                <RentCell g={m.gM} r={m.rM} on={m.vMsci > 0 && m.cM > 0} tint={MSC} sep />
+                <RentCell g={m.gE} r={m.rE} on={m.vEm > 0 && m.cE > 0} tint={EMG} />
+                <RentCell g={m.gC} r={m.rC} on={m.effC > 0 && m.cC > 0} tint={CLC} />
+                <RentCell g={m.gME} r={m.rME} on={m.effME > 0 && m.cME > 0} tint={ME} bold />
                 <td><button className="bd" onClick={e => { e.stopPropagation(); removeFM(m.id, m.month); }}>✕</button></td>
               </tr>
             );
@@ -447,20 +492,25 @@ function FondosM({ fm, efm, saveFM, removeFM }) {
         </tbody></table></div>
         <div className="mob-card" style={{ padding: 12 }}>
           {efm.map(m => {
-            if (m.cME === 0 && m.carteraME === 0) return null;
+            if (m.cME === 0 && m.effME === 0) return null;
+            const MR = ({ l, c, v }) => <div className="mob-row"><span className="mob-lbl" style={{ color: c }}>{l}</span><span style={{ fontFamily: "monospace", color: c }}>{v}</span></div>;
             return (
               <div key={m.month} className="mob-item" onClick={() => openEdit(m)}>
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{fMN(m.month)}</div>
                 <div className="shdr">Aportación Mensual</div>
-                <div className="mob-row"><span className="mob-lbl" style={{ color: "#60a5fa" }}>MSCI</span><span style={{ fontFamily: "monospace", color: "#60a5fa" }}>{fE(m.apMsci)}</span></div>
-                <div className="mob-row"><span className="mob-lbl" style={{ color: "#f472b6" }}>EMERG.</span><span style={{ fontFamily: "monospace", color: "#f472b6" }}>{fE(m.apEm)}</span></div>
-                {m.apClaseC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", color: CLC }}>{fE(m.apClaseC)}</span></div>}
+                <MR l="MSCI" c={MSC} v={fE(m.apMsci)} />
+                <MR l="EMERG." c={EMG} v={fE(m.apEm)} />
+                {m.apClaseC > 0 && <MR l="Clase C" c={CLC} v={fE(m.apClaseC)} />}
                 <div className="shdr">Suma de aportaciones</div>
-                <div className="mob-row"><span className="mob-lbl" style={{ color: ME }}>MSCI+EMERG.</span><span style={{ fontFamily: "monospace", fontWeight: 700 }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</span></div>
-                {m.effC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", fontWeight: 700, color: CLC }}>{fE(m.effC)}</span></div>}
+                <MR l="MSCI" c={MSC} v={fE(m.cM)} />
+                <MR l="EMERG." c={EMG} v={fE(m.cE)} />
+                {m.cC > 0 && <MR l="Clase C" c={CLC} v={fE(m.cC)} />}
+                <MR l="MSCI+EMERG." c={ME} v={fE(m.cME)} />
                 <div className="shdr">Rentabilidad</div>
-                {m.carteraME > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: ME }}>MSCI+EMERG.</span><span style={{ fontFamily: "monospace", color: rc(m.gME) }}>{fE(m.gME)} ({fP(m.rME)})</span></div>}
-                {m.effC > 0 && m.cC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", color: rc(m.gC) }}>{fE(m.gC)} ({fP(m.rC)})</span></div>}
+                {m.vMsci > 0 && m.cM > 0 && <MR l="MSCI" c={rc(m.gM)} v={`${fE(m.gM)} (${fP(m.rM)})`} />}
+                {m.vEm > 0 && m.cE > 0 && <MR l="EMERG." c={rc(m.gE)} v={`${fE(m.gE)} (${fP(m.rE)})`} />}
+                {m.effC > 0 && m.cC > 0 && <MR l="Clase C" c={rc(m.gC)} v={`${fE(m.gC)} (${fP(m.rC)})`} />}
+                {m.effME > 0 && m.cME > 0 && <MR l="MSCI+EMERG." c={rc(m.gME)} v={`${fE(m.gME)} (${fP(m.rME)})`} />}
               </div>
             );
           })}
@@ -476,9 +526,15 @@ function FondosM({ fm, efm, saveFM, removeFM }) {
         </div>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>Cartera Real (fin de mes)</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <F l="MSCI+Emerg. (€)"><input className="ip" type="number" step="0.01" value={f.carteraME} onChange={e => sF({ ...f, carteraME: e.target.value })} /></F>
+          <F l="MSCI (€)"><input className="ip" type="number" step="0.01" value={f.carteraMsci} onChange={e => sF({ ...f, carteraMsci: e.target.value })} /></F>
+          <F l="Emerg. (€)"><input className="ip" type="number" step="0.01" value={f.carteraEm} onChange={e => sF({ ...f, carteraEm: e.target.value })} /></F>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <F l="MSCI+Emerg. (€) — opcional"><input className="ip" type="number" step="0.01" placeholder={autoME > 0 ? autoME.toFixed(2) : ""} value={f.carteraME} onChange={e => sF({ ...f, carteraME: e.target.value })} /></F>
           <F l="Clase C (€) — 0 usa acumulado"><input className="ip" type="number" step="0.01" value={f.carteraC} onChange={e => sF({ ...f, carteraC: e.target.value })} /></F>
         </div>
+        {autoME > 0 && manME <= 0 && <div style={{ fontSize: 9, color: ME, marginTop: -4 }}>✓ MSCI+Emerg. se calculará solo: {fE(autoME)}. Déjalo vacío.</div>}
+        {autoME > 0 && manME > 0 && Math.abs(manME - autoME) > 0.02 && <div style={{ fontSize: 9, color: CLC, marginTop: -4 }}>Has escrito {fE(manME)} pero MSCI + Emerg. suman {fE(autoME)}. Se usará el valor que has escrito.</div>}
         <div style={{ display: "flex", gap: 6 }}><button className="bp" style={{ flex: 1 }} onClick={saveM}>Guardar en Supabase</button><button className="bs" onClick={() => setSh(false)}>Cancelar</button></div>
       </Modal>}
     </div>
@@ -492,7 +548,7 @@ function Comp({ efm }) {
     let v3 = 0, v9 = 0;
     for (let j = 0; j <= idx; j++) { const ap = data[j].apMsci + data[j].apEm; const mi = idx - j; v3 += ap * Math.pow(1 + 0.03 / 12, mi); v9 += ap * Math.pow(1 + 0.09 / 12, mi); }
     v3 = Math.round(v3 * 100) / 100; v9 = Math.round(v9 * 100) / 100;
-    return { label: fMN(m.month), ap: m.cME, real: m.carteraME, gR: m.gME, v3, v9, g3: Math.round((v3 - m.cME) * 100) / 100, g9: Math.round((v9 - m.cME) * 100) / 100 };
+    return { label: fMN(m.month), ap: m.cME, real: m.effME, gR: m.gME, v3, v9, g3: Math.round((v3 - m.cME) * 100) / 100, g9: Math.round((v9 - m.cME) * 100) / 100 };
   });
   const cd = rows.map(r => ({ label: r.label, "Solo aportación": r.ap, "Cartera Real": r.real, "Al 3%": r.v3, "Al 9%": r.v9 }));
   return (

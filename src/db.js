@@ -90,6 +90,8 @@ export async function fetchFundMonthly() {
     apMsci: parseFloat(r.ap_msci),
     apEm: parseFloat(r.ap_emergentes),
     apClaseC: parseFloat(r.ap_clase_c),
+    carteraMsci: parseFloat(r.cartera_msci ?? 0),
+    carteraEm: parseFloat(r.cartera_emergentes ?? 0),
     carteraME: parseFloat(r.cartera_msci_em),
     carteraC: parseFloat(r.cartera_clase_c),
   }))
@@ -105,6 +107,8 @@ export async function upsertFundMonth(entry) {
     ap_msci: entry.apMsci,
     ap_emergentes: entry.apEm,
     ap_clase_c: entry.apClaseC,
+    cartera_msci: entry.carteraMsci,
+    cartera_emergentes: entry.carteraEm,
     cartera_msci_em: entry.carteraME,
     cartera_clase_c: entry.carteraC,
   }
