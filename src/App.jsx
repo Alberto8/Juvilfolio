@@ -5,8 +5,14 @@ import * as db from './db';
 
 const PC = { MyInvestor: "#0ea5e9", "Trade Republic": "#ff6b35" };
 const CG = { RV: "#a78bfa", RF: "#34d399" };
+const TC = { Fondo: "#60a5fa", ETF: "#a78bfa", "Acción": "#f472b6", Crypto: "#fbbf24" };
+// Tope de subida aceptable en una actualización de cotizaciones (×2 = +100%)
+const MAX_JUMP = 2;
 const ME = "#34d399";
 const CLC = "#fbbf24";
+// Cabecera de grupo (superclase) y separador entre grupos en la tabla mensual
+const GH = { textAlign: "center", cursor: "default", color: "#94a3b8", borderBottom: "1px solid rgba(148,163,184,.12)" };
+const GSEP = { borderLeft: "1px solid rgba(148,163,184,.14)" };
 const fE = v => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(v);
 const fP = v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
 const fMN = m => { const n = new Date(m + "-01").toLocaleDateString("es-ES", { month: "short", year: "numeric" }); return n.charAt(0).toUpperCase() + n.slice(1); };
@@ -23,6 +29,26 @@ function enrichFM(raw) {
     const rME = cME > 0 && m.carteraME > 0 ? (gME / cME) * 100 : 0;
     const rC = cC > 0 && effC > 0 ? (gC / cC) * 100 : 0;
     return { ...m, cM, cE, cC, cME, effC, gME, gC, gT: gME + gC, rME, rC };
+  });
+}
+
+// Los fondos de RV del plan mensual llevan su aportación real en "Fondos Mensual";
+// ese acumulado manda sobre el campo manual del activo.
+const FM_ACUM = {
+  "IE00BYX5NX33|MyInvestor": "cM", // Fidelity MSCI World Index
+  "IE00BYX5M476|MyInvestor": "cE", // Fidelity Emerging Markets
+  "ES0165243025|MyInvestor": "cC", // MyInvestor Value Clase C
+};
+
+function enrichAssets(assets, efm) {
+  const last = efm.length ? efm[efm.length - 1] : null;
+  if (!last) return assets;
+  return assets.map(a => {
+    const k = FM_ACUM[a.ticker + "|" + a.platform];
+    const ap = k ? last[k] : 0;
+    if (!ap || ap <= 0) return a;
+    const ge = Math.round((a.valorActual - ap) * 100) / 100;
+    return { ...a, aportado: ap, gananciaEur: ge, gananciaPct: Math.round((ge / ap) * 10000) / 100, apFM: true };
   });
 }
 
@@ -157,24 +183,30 @@ export default function App({ session }) {
 
       const updates = [];
       let ok = 0, fail = 0;
+      const bad = [];
       const updated = assets.map(a => {
         const r = results.find(x => x.id === a.id);
-        if (r && r.price && r.price > 0) {
-          // valorActual = precio actual × participaciones
-          const va = Math.round(r.price * a.participaciones * 100) / 100;
-          const ge = Math.round((va - a.aportado) * 100) / 100;
-          const gp = a.aportado > 0 ? Math.round((ge / a.aportado) * 10000) / 100 : 0;
-          updates.push({ id: a.id, valorActual: va });
-          ok++;
-          return { ...a, valorActual: va, gananciaEur: ge, gananciaPct: gp };
-        }
-        fail++;
-        return a;
+        if (!r || !r.price || r.price <= 0) { fail++; return a; }
+        // Un precio en otra divisa significa que Yahoo devolvió un homónimo de otra bolsa
+        if (r.currency && r.currency !== "EUR") { bad.push(a.name); return a; }
+        // valorActual = precio actual × participaciones
+        const va = Math.round(r.price * a.participaciones * 100) / 100;
+        // Descartar saltos imposibles en una sola actualización: no son mercado, es un símbolo mal resuelto
+        if (a.valorActual > 0 && va > a.valorActual * MAX_JUMP) { bad.push(a.name); return a; }
+        const ge = Math.round((va - a.aportado) * 100) / 100;
+        const gp = a.aportado > 0 ? Math.round((ge / a.aportado) * 10000) / 100 : 0;
+        updates.push({ id: a.id, valorActual: va });
+        ok++;
+        return { ...a, valorActual: va, gananciaEur: ge, gananciaPct: gp };
       });
       setAssets(updated);
       if (updates.length) await db.bulkUpdateAssetValues(updates);
       setLastUp(new Date().toLocaleString("es-ES"));
-      setQuoteMsg(`${ok} activos actualizados${fail > 0 ? `, ${fail} sin datos (edítalos a mano)` : ""}`);
+      setQuoteMsg([
+        `${ok} activos actualizados`,
+        bad.length ? `${bad.length} descartados por precio anómalo (${bad.join(", ")})` : null,
+        fail ? `${fail} sin datos (edítalos a mano)` : null,
+      ].filter(Boolean).join(" · "));
     } catch (e) {
       console.error("fetchQuotes:", e);
       setQuoteMsg("Error al actualizar: " + e.message);
@@ -182,13 +214,15 @@ export default function App({ session }) {
     setFetching(false);
   }, [assets]);
 
-  const tI = useMemo(() => assets.reduce((s, a) => s + a.aportado, 0), [assets]);
-  const tV = useMemo(() => assets.reduce((s, a) => s + a.valorActual, 0), [assets]);
-  const tG = tV - tI;
-  const plats = useMemo(() => { const r = {}; assets.forEach(a => { if (!r[a.platform]) r[a.platform] = { assets: [], ap: 0, va: 0 }; r[a.platform].assets.push(a); r[a.platform].ap += a.aportado; r[a.platform].va += a.valorActual; }); return r; }, [assets]);
-  const byType = useMemo(() => { const r = {}; assets.forEach(a => { if (!r[a.type]) r[a.type] = { ap: 0, va: 0 }; r[a.type].ap += a.aportado; r[a.type].va += a.valorActual; }); return r; }, [assets]);
-  const byCat = useMemo(() => { const r = {}; assets.forEach(a => { if (!r[a.category]) r[a.category] = { ap: 0, va: 0 }; r[a.category].ap += a.aportado; r[a.category].va += a.valorActual; }); return r; }, [assets]);
   const efm = useMemo(() => enrichFM(fm), [fm]);
+  // Vista de activos con el aportado de los fondos mensuales ya aplicado
+  const av = useMemo(() => enrichAssets(assets, efm), [assets, efm]);
+  const tI = useMemo(() => av.reduce((s, a) => s + a.aportado, 0), [av]);
+  const tV = useMemo(() => av.reduce((s, a) => s + a.valorActual, 0), [av]);
+  const tG = tV - tI;
+  const plats = useMemo(() => { const r = {}; av.forEach(a => { if (!r[a.platform]) r[a.platform] = { assets: [], ap: 0, va: 0 }; r[a.platform].assets.push(a); r[a.platform].ap += a.aportado; r[a.platform].va += a.valorActual; }); return r; }, [av]);
+  const byType = useMemo(() => { const r = {}; av.forEach(a => { if (!r[a.type]) r[a.type] = { ap: 0, va: 0 }; r[a.type].ap += a.aportado; r[a.type].va += a.valorActual; }); return r; }, [av]);
+  const byCat = useMemo(() => { const r = {}; av.forEach(a => { if (!r[a.category]) r[a.category] = { ap: 0, va: 0 }; r[a.category].ap += a.aportado; r[a.category].va += a.valorActual; }); return r; }, [av]);
 
   const TABS = ["Dashboard", "Cartera", "Fondos Mensual", "Comparativa", "Ajustes"];
 
@@ -210,8 +244,8 @@ export default function App({ session }) {
         </div>
       </header>
       <main style={{ padding: "14px 16px 40px" }}>
-        {tab === "Dashboard" && <Dash assets={assets} plats={plats} byType={byType} byCat={byCat} tI={tI} tV={tV} tG={tG} efm={efm} fe={fetching} fq={fetchQuotes} lu={lastUp} qmsg={quoteMsg} />}
-        {tab === "Cartera" && <Cart assets={assets} saveAsset={saveAsset} removeAsset={removeAsset} fe={fetching} fq={fetchQuotes} lu={lastUp} />}
+        {tab === "Dashboard" && <Dash assets={av} plats={plats} byType={byType} byCat={byCat} tI={tI} tV={tV} tG={tG} efm={efm} fe={fetching} fq={fetchQuotes} lu={lastUp} qmsg={quoteMsg} />}
+        {tab === "Cartera" && <Cart assets={av} saveAsset={saveAsset} removeAsset={removeAsset} fe={fetching} fq={fetchQuotes} lu={lastUp} />}
         {tab === "Fondos Mensual" && <FondosM fm={fm} efm={efm} saveFM={saveFM} removeFM={removeFM} />}
         {tab === "Comparativa" && <Comp efm={efm} />}
         {tab === "Ajustes" && <Sett loadAll={loadAll} session={session} />}
@@ -233,7 +267,6 @@ function KPICard({ label, labelColor, value, gain, pct, invested }) {
 
 function Dash({ assets, plats, byType, byCat, tI, tV, tG, efm, fe, fq, lu, qmsg }) {
   const cd = efm.filter(m => m.cME > 0).map(m => ({ label: fMN(m.month), aportado: m.cME + m.cC, cartera: m.carteraME + m.effC }));
-  const typeColors = { Fondo: "#60a5fa", ETF: "#a78bfa", "Acción": "#f472b6", Crypto: "#fbbf24" };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="cd" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", flexWrap: "wrap", gap: 8 }}>
@@ -262,7 +295,7 @@ function Dash({ assets, plats, byType, byCat, tI, tV, tG, efm, fe, fq, lu, qmsg 
 
       <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1 }}>Por Tipo de Activo</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10 }}>
-        {Object.entries(byType).map(([type, d]) => { const g = d.va - d.ap; return <KPICard key={type} label={type} labelColor={typeColors[type]} value={d.va} gain={g} pct={d.ap > 0 ? (g / d.ap) * 100 : 0} invested={d.ap} />; })}
+        {Object.entries(byType).map(([type, d]) => { const g = d.va - d.ap; return <KPICard key={type} label={type} labelColor={TC[type]} value={d.va} gain={g} pct={d.ap > 0 ? (g / d.ap) * 100 : 0} invested={d.ap} />; })}
       </div>
 
       {Object.entries(plats).map(([p, d]) => {
@@ -294,7 +327,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
   const [sh, setSh] = useState(false); const [eId, setEId] = useState(null);
   const [f, sF] = useState({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "" });
   const s = useSort("name", 1); const sorted = [...assets].sort(s.sortFn);
-  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual) }); setSh(true); }
+  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual), apFM: !!a.apFM }); setSh(true); }
   async function save() { const ap = parseFloat(f.aportado) || 0; const va = parseFloat(f.valorActual) || 0; await saveAsset({ id: eId || ("temp-" + Date.now()), name: f.name, ticker: f.ticker, platform: f.platform, type: f.type, category: f.category, participaciones: parseFloat(f.participaciones) || 0, costeMedio: parseFloat(f.costeMedio) || 0, aportado: ap, valorActual: va, gananciaEur: va - ap, gananciaPct: ap > 0 ? ((va - ap) / ap) * 100 : 0 }); sF({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "" }); setEId(null); setSh(false); }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -310,7 +343,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
         <div className="rtable"><table><thead><tr>
           <th onClick={() => s.toggle("name")}>Activo {s.arrow("name")}</th>
           <th onClick={() => s.toggle("platform")}>Plataforma {s.arrow("platform")}</th>
-          <th onClick={() => s.toggle("category")}>Cat. {s.arrow("category")}</th>
+          <th onClick={() => s.toggle("type")}>Tipo {s.arrow("type")}</th>
           <th onClick={() => s.toggle("aportado")} style={{ textAlign: "right" }}>Aportado {s.arrow("aportado")}</th>
           <th onClick={() => s.toggle("valorActual")} style={{ textAlign: "right" }}>Valor {s.arrow("valorActual")}</th>
           <th onClick={() => s.toggle("gananciaPct")} style={{ textAlign: "right" }}>Rentabilidad {s.arrow("gananciaPct")}</th>
@@ -320,7 +353,10 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
             <tr key={a.id} style={{ cursor: "pointer" }} onClick={() => openEdit(a)}>
               <td><div style={{ fontWeight: 600 }}>{a.name}</div><div style={{ fontSize: 9, color: "#4b5563", fontFamily: "monospace" }}>{a.participaciones} part.</div></td>
               <td><span className="bg" style={{ background: (PC[a.platform] || "#6366f1") + "18", color: PC[a.platform] }}>{a.platform}</span></td>
-              <td><span className="bg" style={{ background: CG[a.category] + "18", color: CG[a.category] }}>{a.category}</span></td>
+              <td style={{ whiteSpace: "nowrap" }}>
+                <span className="bg" style={{ background: (TC[a.type] || "#6366f1") + "18", color: TC[a.type] || "#818cf8" }}>{a.type}</span>
+                {a.type === "Fondo" && <span className="bg" style={{ background: CG[a.category] + "18", color: CG[a.category], marginLeft: 4 }}>{a.category}</span>}
+              </td>
               <td style={{ textAlign: "right", fontFamily: "monospace" }}>{fE(a.aportado)}</td>
               <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fE(a.valorActual)}</td>
               <td style={{ textAlign: "right", fontFamily: "monospace", color: rc(a.gananciaEur) }}>{fE(a.gananciaEur)} ({fP(a.gananciaPct)})</td>
@@ -333,6 +369,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
             <div key={a.id} className="mob-item" onClick={() => openEdit(a)}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontWeight: 600 }}>{a.name}</span><span style={{ fontFamily: "monospace", fontWeight: 700 }}>{fE(a.valorActual)}</span></div>
               <div className="mob-row"><span className="mob-lbl">Plataforma</span><span>{a.platform}</span></div>
+              <div className="mob-row"><span className="mob-lbl">Tipo</span><span style={{ color: TC[a.type] || "#818cf8" }}>{a.type}{a.type === "Fondo" ? ` · ${a.category}` : ""}</span></div>
               <div className="mob-row"><span className="mob-lbl">Aportado</span><span style={{ fontFamily: "monospace" }}>{fE(a.aportado)}</span></div>
               <div className="mob-row"><span className="mob-lbl">Rentabilidad</span><span style={{ fontFamily: "monospace", color: rc(a.gananciaEur) }}>{fE(a.gananciaEur)} ({fP(a.gananciaPct)})</span></div>
             </div>
@@ -352,7 +389,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
           <F l="Coste Medio (€)"><input className="ip" type="number" step="0.01" value={f.costeMedio} onChange={e => sF({ ...f, costeMedio: e.target.value })} /></F>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <F l="Aportado (€)"><input className="ip" type="number" step="0.01" value={f.aportado} onChange={e => sF({ ...f, aportado: e.target.value })} /></F>
+          <F l={f.apFM ? "Aportado (€) — de Fondos Mensual" : "Aportado (€)"}><input className="ip" type="number" step="0.01" value={f.aportado} disabled={f.apFM} onChange={e => sF({ ...f, aportado: e.target.value })} /></F>
           <F l="Valor Actual (€)"><input className="ip" type="number" step="0.01" value={f.valorActual} onChange={e => sF({ ...f, valorActual: e.target.value })} /></F>
         </div>
         <div style={{ display: "flex", gap: 6 }}><button className="bp" style={{ flex: 1 }} onClick={save}>Guardar</button><button className="bs" onClick={() => { setSh(false); setEId(null); }}>Cancelar</button></div>
@@ -373,18 +410,24 @@ function FondosM({ fm, efm, saveFM, removeFM }) {
         <button className="bp" onClick={() => { setEMonth(null); sF({ month: "", apMsci: "", apEm: "", apClaseC: "", carteraME: "", carteraC: "" }); setSh(true); }}>+ Mes</button>
       </div>
       <div className="cd" style={{ padding: 0 }}>
-        <div className="rtable"><table><thead><tr>
-          <th>Mes</th>
-          <th style={{ color: "#60a5fa" }}>MSCI</th>
-          <th style={{ color: "#f472b6" }}>Emerg.</th>
-          <th style={{ color: CLC }}>Clase C</th>
-          <th>Aport. M+E</th>
-          <th style={{ background: ME + "15", color: ME }}>Cartera M+E</th>
-          <th style={{ background: CLC + "15", color: CLC }}>Cartera C</th>
-          <th style={{ background: ME + "15", color: ME }}>Rent. M+E</th>
-          <th style={{ background: CLC + "15", color: CLC }}>Rent. C</th>
-          <th />
-        </tr></thead><tbody>
+        <div className="rtable"><table><thead>
+          <tr>
+            <th rowSpan={2} style={{ verticalAlign: "bottom", cursor: "default" }}>Mes</th>
+            <th colSpan={3} style={GH}>Aportación Mensual</th>
+            <th colSpan={2} style={{ ...GH, ...GSEP, background: ME + "10" }}>Suma de aportaciones</th>
+            <th colSpan={2} style={{ ...GH, ...GSEP }}>Rentabilidad</th>
+            <th rowSpan={2} />
+          </tr>
+          <tr>
+            <th style={{ color: "#60a5fa" }}>MSCI</th>
+            <th style={{ color: "#f472b6" }}>EMERG.</th>
+            <th style={{ color: CLC }}>Clase C</th>
+            <th style={{ ...GSEP, background: ME + "15", color: ME }}>MSCI+EMERG.</th>
+            <th style={{ background: CLC + "15", color: CLC }}>Clase C</th>
+            <th style={{ ...GSEP, background: ME + "15", color: ME }}>MSCI+EMERG.</th>
+            <th style={{ background: CLC + "15", color: CLC }}>Clase C</th>
+          </tr>
+        </thead><tbody>
           {efm.map(m => {
             if (m.cME === 0 && m.carteraME === 0) return null;
             return (
@@ -393,10 +436,9 @@ function FondosM({ fm, efm, saveFM, removeFM }) {
                 <td style={{ fontFamily: "monospace", color: "#60a5fa" }}>{m.apMsci > 0 ? fE(m.apMsci) : "—"}</td>
                 <td style={{ fontFamily: "monospace", color: "#f472b6" }}>{m.apEm > 0 ? fE(m.apEm) : "—"}</td>
                 <td style={{ fontFamily: "monospace", color: CLC }}>{m.apClaseC > 0 ? fE(m.apClaseC) : "—"}</td>
-                <td style={{ fontFamily: "monospace", color: "#94a3b8" }}>{fE(m.cME)}</td>
-                <td style={{ fontFamily: "monospace", fontWeight: 600, background: ME + "08" }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</td>
+                <td style={{ ...GSEP, fontFamily: "monospace", fontWeight: 600, background: ME + "08" }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</td>
                 <td style={{ fontFamily: "monospace", fontWeight: 600, color: CLC, background: CLC + "08" }}>{m.effC > 0 ? fE(m.effC) : "—"}</td>
-                <td style={{ fontFamily: "monospace", background: ME + "08", color: rc(m.gME) }}>{m.carteraME > 0 ? fE(m.gME) + " (" + fP(m.rME) + ")" : "—"}</td>
+                <td style={{ ...GSEP, fontFamily: "monospace", background: ME + "08", color: rc(m.gME) }}>{m.carteraME > 0 ? fE(m.gME) + " (" + fP(m.rME) + ")" : "—"}</td>
                 <td style={{ fontFamily: "monospace", background: CLC + "08", color: m.effC > 0 ? rc(m.gC) : "#374151" }}>{m.effC > 0 && m.cC > 0 ? fE(m.gC) + " (" + fP(m.rC) + ")" : "—"}</td>
                 <td><button className="bd" onClick={e => { e.stopPropagation(); removeFM(m.id, m.month); }}>✕</button></td>
               </tr>
@@ -409,11 +451,16 @@ function FondosM({ fm, efm, saveFM, removeFM }) {
             return (
               <div key={m.month} className="mob-item" onClick={() => openEdit(m)}>
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{fMN(m.month)}</div>
+                <div className="shdr">Aportación Mensual</div>
                 <div className="mob-row"><span className="mob-lbl" style={{ color: "#60a5fa" }}>MSCI</span><span style={{ fontFamily: "monospace", color: "#60a5fa" }}>{fE(m.apMsci)}</span></div>
-                <div className="mob-row"><span className="mob-lbl" style={{ color: "#f472b6" }}>Emergentes</span><span style={{ fontFamily: "monospace", color: "#f472b6" }}>{fE(m.apEm)}</span></div>
+                <div className="mob-row"><span className="mob-lbl" style={{ color: "#f472b6" }}>EMERG.</span><span style={{ fontFamily: "monospace", color: "#f472b6" }}>{fE(m.apEm)}</span></div>
                 {m.apClaseC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", color: CLC }}>{fE(m.apClaseC)}</span></div>}
-                <div className="mob-row"><span className="mob-lbl">Cartera M+E</span><span style={{ fontFamily: "monospace", fontWeight: 700 }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</span></div>
-                {m.carteraME > 0 && <div className="mob-row"><span className="mob-lbl">Rent. M+E</span><span style={{ fontFamily: "monospace", color: rc(m.gME) }}>{fE(m.gME)} ({fP(m.rME)})</span></div>}
+                <div className="shdr">Suma de aportaciones</div>
+                <div className="mob-row"><span className="mob-lbl" style={{ color: ME }}>MSCI+EMERG.</span><span style={{ fontFamily: "monospace", fontWeight: 700 }}>{m.carteraME > 0 ? fE(m.carteraME) : "—"}</span></div>
+                {m.effC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", fontWeight: 700, color: CLC }}>{fE(m.effC)}</span></div>}
+                <div className="shdr">Rentabilidad</div>
+                {m.carteraME > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: ME }}>MSCI+EMERG.</span><span style={{ fontFamily: "monospace", color: rc(m.gME) }}>{fE(m.gME)} ({fP(m.rME)})</span></div>}
+                {m.effC > 0 && m.cC > 0 && <div className="mob-row"><span className="mob-lbl" style={{ color: CLC }}>Clase C</span><span style={{ fontFamily: "monospace", color: rc(m.gC) }}>{fE(m.gC)} ({fP(m.rC)})</span></div>}
               </div>
             );
           })}

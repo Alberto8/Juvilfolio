@@ -41,31 +41,52 @@ async function fetchPrice(symbol) {
   return { price, currency: meta.currency || 'EUR', symbol: meta.symbol || symbol };
 }
 
-// Determinar el símbolo de Yahoo según el activo
-async function resolveSymbol(item) {
+// Candidatos de símbolo de Yahoo para un activo, en orden de preferencia
+async function candidateSymbols(item) {
   const t = (item.ticker || '').trim();
+  const up = t.toUpperCase();
 
   // Bitcoin → precio en EUR
-  if (t.toUpperCase() === 'BTC' || /bitcoin/i.test(item.name || '')) return 'BTC-EUR';
+  if (up === 'BTC' || /bitcoin/i.test(item.name || '')) return ['BTC-EUR'];
 
   // Si parece un ISIN, buscarlo
-  if (ISIN_RE.test(t)) {
-    const s = await searchSymbol(t);
-    if (s) return s;
+  if (ISIN_RE.test(up)) {
+    const s = await searchSymbol(up);
+    return s ? [s] : [];
   }
 
-  // Tickers internos sin equivalente en Yahoo
-  if (t === 'STORM-RF' || t === 'EM-ETF') {
-    // Intentar buscar por nombre como último recurso
+  // Tickers internos sin equivalente en Yahoo: buscar por nombre
+  if (up === 'STORM-RF' || up === 'EM-ETF') {
     const s = await searchSymbol(item.name || t);
-    if (s) return s;
-    return null;
+    return s ? [s] : [];
   }
 
-  // Acción española: probar buscar el ticker y, si falla, añadir .MC
+  // Acción española: el sufijo .MC (mercado continuo) se prueba SIEMPRE primero.
+  // El buscador de Yahoo devuelve homónimos de otras bolsas para tickers cortos
+  // (AMP → AMP.AX de Australia, NXT → Nextracker en NYSE) y su precio, aplicado
+  // a las participaciones, falsea por completo el valor de la cartera.
+  const cands = [];
+  if (/^[A-Z]{1,5}$/.test(up)) cands.push(up + '.MC');
   const s = await searchSymbol(t);
-  if (s) return s;
-  return t + '.MC';
+  if (s && !cands.includes(s)) cands.push(s);
+  return cands;
+}
+
+// Cotización del primer candidato válido, prefiriendo el que cotice en EUR
+async function quoteFor(item) {
+  const cands = await candidateSymbols(item);
+  let fallback = null;
+  for (const sym of cands) {
+    try {
+      const q = await fetchPrice(sym);
+      if (!q.price || q.price <= 0) continue;
+      if (q.currency === 'EUR') return q;
+      if (!fallback) fallback = q;
+    } catch {
+      // símbolo inválido o sin datos: probar el siguiente candidato
+    }
+  }
+  return fallback;
 }
 
 export default async function handler(req, res) {
@@ -84,10 +105,9 @@ export default async function handler(req, res) {
   const results = [];
   for (const item of items) {
     try {
-      const symbol = await resolveSymbol(item);
-      if (!symbol) { results.push({ id: item.id, price: null, error: 'sin símbolo' }); continue; }
-      const { price, currency, symbol: finalSym } = await fetchPrice(symbol);
-      results.push({ id: item.id, symbol: finalSym, price, currency });
+      const q = await quoteFor(item);
+      if (!q) { results.push({ id: item.id, price: null, error: 'sin símbolo' }); continue; }
+      results.push({ id: item.id, symbol: q.symbol, price: q.price, currency: q.currency });
     } catch (e) {
       results.push({ id: item.id, price: null, error: e.message });
     }
