@@ -215,3 +215,13 @@ En un año, cada fila del detalle muestra valor al empezar, aportado del año, v
 cerrar y la ganancia del tramo. La serie histórica sale de `asset_snapshots` si hay fotos
 (cubre toda la cartera) y si no de `fund_monthly` (solo los tres fondos del plan), y el pie
 de la pestaña dice cuál se está usando.
+
+## `npm run smoke`
+Monta la app entera en jsdom con datos falsos, recorre las seis pestañas, abre los modales
+y alterna el tema, capturando cualquier error de render. `npm run build` **no** detecta
+referencias a variables inexistentes: compila bien y luego la pantalla sale en negro. Esta
+prueba sí las pilla — se escribió justo para cazar una de ellas.
+
+Los dobles están en `.smoke/` y se inyectan con `resolve.alias` de Vite, porque los
+namespaces de módulos ESM son de solo lectura y no se pueden sobrescribir con `Object.assign`.
+No toca Supabase ni la red.

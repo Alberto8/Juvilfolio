@@ -259,6 +259,11 @@ export default function App({ session }) {
     } catch (e) { alert("Error eliminando mes: " + e.message); }
   }
 
+  const planAssets = useMemo(() => planAssetsDe(assets, contribs), [assets, contribs]);
+  const plan = useMemo(() => enrichPlan(planAssets, contribs, nav), [planAssets, contribs, nav]);
+  // Vista de activos con el aportado y las participaciones del plan ya aplicados
+  const av = useMemo(() => enrichAssets(assets, plan), [assets, plan]);
+
   const fetchQuotes = useCallback(async () => {
     if (!assets.length) return;
     setFetching(true);
