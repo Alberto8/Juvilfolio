@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Line, LineChart, BarChart, Bar, Cell, ReferenceLine } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Line, LineChart, BarChart, Bar, Cell, ReferenceLine, PieChart, Pie } from "recharts";
 import { supabase } from './supabase';
 import * as db from './db';
 import { PAL, css, readTheme, writeTheme } from './theme';
@@ -333,7 +333,7 @@ export default function App({ session }) {
   const byType = useMemo(() => { const r = {}; av.forEach(a => { if (!r[a.type]) r[a.type] = { ap: 0, va: 0 }; r[a.type].ap += a.aportado; r[a.type].va += a.valorActual; }); return r; }, [av]);
   const byCat = useMemo(() => { const r = {}; av.forEach(a => { if (!r[a.category]) r[a.category] = { ap: 0, va: 0 }; r[a.category].ap += a.aportado; r[a.category].va += a.valorActual; }); return r; }, [av]);
 
-  const TABS = ["Dashboard", "Cartera", "Fondos Mensual", "Comparativa", "Anualidades", "Ajustes"];
+  const TABS = ["Dashboard", "Cartera", "Fondos Mensual", "Comparativa", "Anualidades", "Balanceo", "Ajustes"];
 
   if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: P.bg, color: P.t3, fontFamily: "system-ui" }}><div style={{ textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>Cargando tu cartera desde Supabase...</div></div>;
 
@@ -359,6 +359,7 @@ export default function App({ session }) {
         {tab === "Fondos Mensual" && <FondosM planAssets={planAssets} plan={plan} nav={nav} contribOk={db.contribSupported()} saveMonth={saveMonth} removeMonth={removeMonth} />}
         {tab === "Comparativa" && <Comp plan={plan} />}
         {tab === "Anualidades" && <Anu assets={av} plan={plan} planAssets={planAssets} snaps={snaps} tI={tI} tV={tV} tG={tG} />}
+        {tab === "Balanceo" && <Bal assets={av} tV={tV} />}
         {tab === "Ajustes" && <Sett loadAll={loadAll} session={session} assets={av} toggleManual={toggleManual} />}
       </main>
     </div>
@@ -438,7 +439,7 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
   const [sh, setSh] = useState(false); const [eId, setEId] = useState(null);
   const [f, sF] = useState({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "", planMensual: false });
   const s = useSort("name", 1); const sorted = [...assets].sort(s.sortFn);
-  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual), apFM: !!a.apFM, planMensual: !!a.planMensual }); setSh(true); }
+  function openEdit(a) { setEId(a.id); sF({ name: a.name, ticker: a.ticker, platform: a.platform, type: a.type, category: a.category, participaciones: String(a.participaciones), costeMedio: String(a.costeMedio), aportado: String(a.aportado), valorActual: String(a.valorActual), apFM: !!a.apFM, planMensual: !!a.planMensual, px: a.participaciones > 0 ? a.valorActual / a.participaciones : 0 }); setSh(true); }
   async function save() { const ap = parseFloat(f.aportado) || 0; const va = parseFloat(f.valorActual) || 0; await saveAsset({ id: eId || ("temp-" + Date.now()), name: f.name, ticker: f.ticker, platform: f.platform, type: f.type, category: f.category, participaciones: parseFloat(f.participaciones) || 0, costeMedio: parseFloat(f.costeMedio) || 0, aportado: ap, valorActual: va, planMensual: !!f.planMensual, gananciaEur: va - ap, gananciaPct: ap > 0 ? ((va - ap) / ap) * 100 : 0 }); sF({ name: "", ticker: "", platform: "MyInvestor", type: "Fondo", category: "RV", participaciones: "", costeMedio: "", aportado: "", valorActual: "", planMensual: false }); setEId(null); setSh(false); }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -507,6 +508,26 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
           <input type="checkbox" checked={!!f.planMensual} onChange={e => sF({ ...f, planMensual: e.target.checked })} style={{ marginTop: 1, cursor: "pointer" }} />
           <span>Aporto a este activo cada mes<div style={{ fontSize: 9, color: P.t4, marginTop: 2 }}>Le da columna propia en Fondos Mensual, separada por plataforma. Su aportado y sus participaciones pasarán a salir de ahí.</div></span>
         </label>
+        {f.px > 0 && <div style={{ fontSize: 10, color: P.t4, background: P.seg, borderRadius: 8, padding: "9px 11px", lineHeight: 1.55 }}>
+          Precio unitario en uso: <strong style={{ fontFamily: "monospace", color: P.tx }}>{f.px.toFixed(6)} €</strong>.
+          El botón de cotizaciones recalcula siempre <em>valor = precio × participaciones</em>, así que
+          el valor que escribas aquí lo pisa en la siguiente actualización. Si la plataforma te muestra
+          otro valor, lo que hay que corregir son las <strong>participaciones</strong>.
+          <div style={{ marginTop: 7, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="bs" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => {
+              const v = parseFloat(f.valorActual) || 0;
+              if (v > 0 && f.px > 0) sF({ ...f, participaciones: String(Math.round((v / f.px) * 1e6) / 1e6) });
+            }}>↻ Despejar participaciones desde el valor</button>
+            {(() => {
+              const v = parseFloat(f.valorActual) || 0;
+              const pa = parseFloat(f.participaciones) || 0;
+              if (!(v > 0) || !(f.px > 0)) return null;
+              const sugeridas = Math.round((v / f.px) * 1e6) / 1e6;
+              if (Math.abs(sugeridas - pa) < 1e-6) return <span style={{ color: P.up }}>✓ cuadra</span>;
+              return <span style={{ color: P.clc }}>serían {sugeridas} part.</span>;
+            })()}
+          </div>
+        </div>}
         <div style={{ display: "flex", gap: 6 }}><button className="bp" style={{ flex: 1 }} onClick={save}>Guardar</button><button className="bs" onClick={() => { setSh(false); setEId(null); }}>Cancelar</button></div>
       </Modal>}
     </div>
@@ -748,34 +769,52 @@ const anoDe = d => d.slice(0, 4);
 // cada año. Dos orígenes posibles, y el primero que tenga datos gana:
 //   1. asset_snapshots — las fotos que guarda el botón. Cubre TODA la cartera.
 //   2. fund_monthly — el histórico manual. Solo los tres fondos del plan.
+// Serie histórica por activo, FUSIONANDO las dos fuentes:
+//   · el plan mensual (aportaciones + NAV), que llega hasta el primer mes;
+//   · las fotos de asset_snapshots, que cubren toda la cartera pero solo desde
+//     que se empezó a pulsar el botón.
+// Antes se elegía una u otra, y en cuanto había una sola foto se perdían de vista
+// todos los años anteriores. Donde coinciden mes, gana la foto: es dato medido,
+// no modelado.
 function buildSeries(assets, snaps, plan, planAssets) {
-  if (snaps.length) {
-    const porActivo = new Map();
-    for (const sn of snaps) {
-      const m = porActivo.get(sn.assetId) || new Map();
-      // De cada mes se queda la última foto: es el cierre de ese mes
-      const mes = sn.takenOn.slice(0, 7);
-      const prev = m.get(mes);
-      if (!prev || prev.d <= sn.takenOn) m.set(mes, { d: sn.takenOn, ap: sn.aportado, val: sn.valorActual });
-      porActivo.set(sn.assetId, m);
+  const porActivo = new Map();
+  const meta = new Map();
+
+  for (const a of planAssets) {
+    const m = new Map();
+    for (const f of plan) {
+      const d = f.per[a.id];
+      if (d && (d.apAcum > 0 || d.val > 0)) m.set(f.month, { d: f.month, ap: d.apAcum, val: d.val });
     }
-    const out = [];
-    for (const a of assets) {
-      const m = porActivo.get(a.id);
-      if (!m) continue;
-      out.push({ key: a.id, name: a.name, sub: a.platform + " · " + a.type, tint: TC()[a.type], byMonth: m });
+    if (m.size) {
+      porActivo.set(a.id, m);
+      meta.set(a.id, { name: a.name, sub: a.platform + " · plan mensual", tint: tono(a) });
     }
-    if (out.length) return { entries: out, origen: "fotos" };
   }
-  const entries = planAssets.map(a => {
-    const byMonth = new Map();
-    for (const m of plan) {
-      const d = m.per[a.id];
-      if (d && (d.apAcum > 0 || d.val > 0)) byMonth.set(m.month, { d: m.month, ap: d.apAcum, val: d.val });
+
+  for (const sn of snaps) {
+    const mes = sn.takenOn.slice(0, 7);
+    const m = porActivo.get(sn.assetId) || new Map();
+    const prev = m.get(mes);
+    // 'd' del plan es 'YYYY-MM' y de una foto 'YYYY-MM-DD', así que la
+    // comparación de cadenas ya hace que la foto gane
+    if (!prev || prev.d <= sn.takenOn) m.set(mes, { d: sn.takenOn, ap: sn.aportado, val: sn.valorActual });
+    porActivo.set(sn.assetId, m);
+    if (!meta.has(sn.assetId)) {
+      const a = assets.find(x => x.id === sn.assetId);
+      if (a) meta.set(sn.assetId, { name: a.name, sub: a.platform + " · " + a.type, tint: TC()[a.type] });
     }
-    return { key: a.id, name: a.name, sub: a.platform + " · plan mensual", tint: tono(a), byMonth };
-  }).filter(e => e.byMonth.size);
-  return { entries, origen: "fondos" };
+  }
+
+  const entries = [];
+  for (const a of assets) {
+    const m = porActivo.get(a.id);
+    if (!m || !m.size) continue;
+    entries.push({ key: a.id, ...meta.get(a.id), byMonth: m });
+  }
+  const hayPlan = plan.length > 0 && planAssets.length > 0;
+  const origen = snaps.length ? (hayPlan ? "mixto" : "fotos") : "fondos";
+  return { entries, origen };
 }
 
 // Último mes registrado de cada año, por entrada
@@ -1091,11 +1130,346 @@ function Anu({ assets, plan, planAssets, snaps, tI, tV, tG }) {
       <div className="cd" style={{ background: `${P.rv}0d`, borderColor: `${P.rv}2b`, padding: 12 }}>
         <p style={{ margin: 0, fontSize: 10, color: P.t4, lineHeight: 1.6 }}>
           <strong style={{ color: P.rv }}>TOTAL</strong> es la foto de hoy de los {assets.length} activos: lo aportado frente al valor de cotización.<br />
-          <strong style={{ color: P.rv }}>Los años</strong> salen {origen === "fotos"
-            ? "de las fotos que guarda el botón de actualizar, así que cubren toda la cartera."
-            : "del plan mensual, así que solo cubren los " + planAssets.length + " activos a los que aportas cada mes. En cuanto se acumulen fotos del botón pasarán a cubrir toda la cartera."}
+          <strong style={{ color: P.rv }}>Los años</strong> salen {origen === "mixto"
+            ? "de dos sitios a la vez: el plan mensual, que llega hasta el primer mes, y las fotos del botón de actualizar, que cubren toda la cartera desde que empezaste a pulsarlo. Donde coinciden manda la foto, que es dato medido."
+            : origen === "fotos"
+              ? "de las fotos que guarda el botón de actualizar, así que cubren toda la cartera."
+              : "del plan mensual, así que solo cubren los " + planAssets.length + " activos a los que aportas cada mes. En cuanto se acumulen fotos del botón pasarán a cubrir toda la cartera."}
           {" "}Por eso TOTAL puede no cuadrar con la suma de los años.<br />
           Ganancia de un año = <em>valor fin − valor inicio − aportado del año</em>, y el % se mide sobre el capital empleado (valor inicio + aportado).
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Objetivos y selección de activos. Van en localStorage porque son preferencias
+// tuyas, no datos de cartera, y así no hacen falta ni tabla ni migración.
+const OBJ_KEY = "pt-objetivos";
+const SEL_KEY = "pt-balanceo-sel";
+const DIN_KEY = "pt-balanceo-dinero";
+const leerJSON = (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } };
+const guardarJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* se ignora */ } };
+
+// "Activo" va primero: el uso principal es marcar los indexados y ver cuánto
+// pesa cada uno entre ellos.
+const EJES = {
+  "Activo": { campo: "id", etiqueta: null, color: null },
+  "Categoría": { campo: "category", etiqueta: k => CATL[k] || k, color: k => CG()[k] || P.ac },
+  "Tipo": { campo: "type", etiqueta: k => k, color: k => TC()[k] || P.ac },
+  "Plataforma": { campo: "platform", etiqueta: k => k, color: k => PC()[k] || P.ac },
+};
+
+// Clave de identidad del fondo: el ISIN si lo hay, y si no el nombre. Es lo que
+// hace que el MSCI de MyInvestor y el de Trade Republic compartan color.
+const claveFondo = a => (a.ticker || a.name || "").trim().toUpperCase() || a.id;
+
+// Un color por fondo, sin repetir. Primero se respetan los tonos con significado
+// (MSCI azul, Emergentes rosa, Clase C ámbar, Groupama cian) y el resto se
+// reparten de la rueda saltándose los ya ocupados. Con más fondos que colores
+// en la rueda se acabarían repitiendo, pero la rueda tiene doce.
+function coloresPorFondo(assets) {
+  const orden = [...assets].sort((a, b) => (a.name || "").localeCompare(b.name || "") || a.platform.localeCompare(b.platform));
+  const rueda = P.rueda || [P.msc, P.emg, P.clc, P.me, P.rv, P.cy, P.or, P.ac];
+  const mapa = new Map(), usados = new Set();
+  for (const a of orden) {
+    const k = claveFondo(a);
+    if (mapa.has(k)) continue;
+    const t = tono(a);
+    if (t && t !== P.ac && !usados.has(t)) { mapa.set(k, t); usados.add(t); }
+  }
+  let i = 0;
+  for (const a of orden) {
+    const k = claveFondo(a);
+    if (mapa.has(k)) continue;
+    while (i < rueda.length && usados.has(rueda[i])) i++;
+    const c = rueda[i % rueda.length];
+    mapa.set(k, c); usados.add(c); i++;
+  }
+  return mapa;
+}
+
+function Bal({ assets, tV }) {
+  const [eje, setEje] = useState("Activo");
+  const [obj, setObj] = useState(() => leerJSON(OBJ_KEY, {}));
+  // null = todavía sin elegir nada, se entiende como "todos"
+  const [sel, setSel] = useState(() => leerJSON(SEL_KEY, null));
+  // Vacío = se reparte el valor real de lo marcado. Con un número, se reparte ese.
+  const [dineroTxt, setDineroTxt] = useState(() => leerJSON(DIN_KEY, ""));
+  const s = useSort("valor", -1);
+  const def = EJES[eje];
+  const colorFondo = useMemo(() => coloresPorFondo(assets), [assets]);
+
+  const conValor = assets.filter(a => a.valorActual > 0);
+  const marcado = a => sel == null ? true : sel.includes(a.id);
+  const elegidos = conValor.filter(marcado);
+  const fuera = conValor.filter(a => !marcado(a));
+  const tSel = elegidos.reduce((x, a) => x + a.valorActual, 0);
+  const filtrando = sel != null && fuera.length > 0;
+
+  function marcar(id, on) {
+    const base = sel == null ? conValor.map(a => a.id) : sel;
+    const sig = on ? [...new Set([...base, id])] : base.filter(x => x !== id);
+    setSel(sig); guardarJSON(SEL_KEY, sig);
+  }
+  const marcarTodos = () => { setSel(null); guardarJSON(SEL_KEY, null); };
+  const marcarNinguno = () => { setSel([]); guardarJSON(SEL_KEY, []); };
+
+  // El reparto se calcula SOLO sobre los activos marcados, así los pesos suman
+  // 100 entre ellos y no sobre la cartera entera
+  const trozos = useMemo(() => {
+    const m = new Map();
+    for (const a of elegidos) {
+      const k = String(a[def.campo]);
+      const prev = m.get(k) || { k, valor: 0, aportado: 0, n: 0, nombre: null, sub: null, color: null };
+      prev.valor += a.valorActual; prev.aportado += a.aportado; prev.n++;
+      if (eje === "Activo") { prev.nombre = a.name; prev.sub = a.platform + " · " + a.type; prev.color = colorFondo.get(claveFondo(a)); }
+      m.set(k, prev);
+    }
+    const rueda = P.rueda || [P.msc, P.emg, P.clc, P.me, P.rv, P.cy, P.or, P.ac];
+    return [...m.values()]
+      .sort((a, b) => b.valor - a.valor)
+      .map((t, i) => ({
+        ...t,
+        nombre: t.nombre || def.etiqueta(t.k),
+        sub: t.sub || (t.n + (t.n === 1 ? " activo" : " activos")),
+        color: t.color || (def.color ? def.color(t.k) : null) || rueda[i % rueda.length],
+        peso: tSel > 0 ? (t.valor / tSel) * 100 : 0,
+      }));
+  }, [elegidos, eje, def, tSel, colorFondo]);
+
+  const objEje = obj[eje] || {};
+  const sumaObj = trozos.reduce((x, t) => x + (parseFloat(objEje[t.k]) || 0), 0);
+  const hayObj = sumaObj > 0;
+
+  function setObjetivo(k, v) {
+    const sig = { ...obj, [eje]: { ...objEje, [k]: v } };
+    setObj(sig); guardarJSON(OBJ_KEY, sig);
+  }
+  const conObjetivos = mapa => { const sig = { ...obj, [eje]: mapa }; setObj(sig); guardarJSON(OBJ_KEY, sig); };
+  const repartirIgual = () => conObjetivos(Object.fromEntries(trozos.map(t => [t.k, String(Math.round((100 / trozos.length) * 10) / 10)])));
+  const fijarActual = () => conObjetivos(Object.fromEntries(trozos.map(t => [t.k, t.peso.toFixed(1)])));
+  const limpiar = () => { const sig = { ...obj }; delete sig[eje]; setObj(sig); guardarJSON(OBJ_KEY, sig); };
+
+  // El ajuste se mide contra el objetivo NORMALIZADO, para que valga aunque los
+  // objetivos no sumen exactamente 100
+  const dineroManual = parseFloat(dineroTxt);
+  const dinero = dineroManual > 0 ? dineroManual : tSel;
+  const dineroPropio = dineroManual > 0 && Math.abs(dineroManual - tSel) > 0.005;
+  function setDinero(v) { setDineroTxt(v); guardarJSON(DIN_KEY, v); }
+
+  const filas = trozos.map(t => {
+    const o = parseFloat(objEje[t.k]) || 0;
+    const oNorm = hayObj ? (o / sumaObj) * 100 : null;
+    // Importe que le tocaría con el % puesto, sobre el dinero a repartir
+    const objEur = oNorm == null ? null : r2((oNorm / 100) * dinero);
+    return { ...t, obj: o, oNorm, objEur, ajuste: objEur == null ? null : r2(objEur - t.valor) };
+  });
+  const ordenadas = [...filas].sort(s.sortFn);
+  const totalObj = filas.reduce((x, f) => x + (f.objEur || 0), 0);
+
+  const th = (k, l, der) => (
+    <th onClick={() => s.toggle(k)} style={der ? { textAlign: "right" } : undefined}>{l} {s.arrow(k)}</th>
+  );
+  const chip = c => <span style={{ width: 9, height: 9, borderRadius: 3, background: c, flexShrink: 0, display: "inline-block" }} />;
+  // Check maestro: marcado si están todos, a medias si solo algunos
+  const todos = elegidos.length === conValor.length && conValor.length > 0;
+  const maestro = (
+    <input type="checkbox" checked={todos} title={todos ? "Desmarcar todos" : "Marcar todos"}
+      ref={el => { if (el) el.indeterminate = !todos && elegidos.length > 0; }}
+      onChange={() => (todos ? marcarNinguno() : marcarTodos())} style={{ cursor: "pointer" }} />
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Balanceo</h2>
+        <div style={{ display: "flex", gap: 2, background: P.seg, padding: 3, borderRadius: 8, flexWrap: "wrap" }}>
+          {Object.keys(EJES).map(k => <button key={k} className={"tb" + (eje === k ? " ac" : "")} onClick={() => setEje(k)}>{k}</button>)}
+        </div>
+      </div>
+
+      <div className="cd" style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 11, color: P.t2 }}>
+          {filtrando
+            ? <>Midiendo <strong style={{ color: P.tx }}>{elegidos.length} de {conValor.length}</strong> activos · {fE(tSel)} ·
+                <span style={{ color: P.t4 }}> el {tV > 0 ? ((tSel / tV) * 100).toFixed(1) : "0"} % de la cartera</span></>
+            : <>Toda la cartera · <strong style={{ color: P.tx }}>{fE(tSel)}</strong> en {conValor.length} activos</>}
+          {!elegidos.length && <span style={{ color: P.clc }}> — no hay ninguno marcado</span>}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button className="bs" onClick={marcarTodos}>Marcar todos</button>
+          <button className="bs" onClick={marcarNinguno}>Ninguno</button>
+          {eje !== "Activo" && <span style={{ fontSize: 9, color: P.t4, alignSelf: "center" }}>Los checks están en la vista Activo</span>}
+        </div>
+      </div>
+
+      <div className="cd" style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700 }}>Dinero a repartir</div>
+          <div style={{ fontSize: 9, color: P.t4, marginTop: 2 }}>
+            {dineroPropio
+              ? "Los importes se calculan sobre esta cifra, no sobre el valor actual (" + fE(tSel) + ")"
+              : "Vacío = el valor actual de lo marcado. Pon una cifra para planificar otra cantidad."}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input className="ip" type="number" step="0.01" min="0" placeholder={tSel.toFixed(2)}
+            value={dineroTxt} onChange={e => setDinero(e.target.value)}
+            style={{ width: 140, textAlign: "right", fontFamily: "monospace" }} />
+          {dineroPropio && <button className="bs" onClick={() => setDinero("")}>↺ Valor actual</button>}
+        </div>
+      </div>
+
+      {!elegidos.length
+        ? <div className="cd"><p style={{ margin: 0, fontSize: 11, color: P.t4 }}>Marca los activos que quieras medir en la vista <strong>Activo</strong>. Para los indexados, marca solo esos y verás cuánto pesa cada uno entre ellos.</p></div>
+        : <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>
+            <div className="cd">
+              <div style={{ fontSize: 9, color: P.t4, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Reparto por {eje.toLowerCase()}</div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={trozos} dataKey="valor" nameKey="nombre" cx="50%" cy="50%" innerRadius="52%" outerRadius="80%"
+                      paddingAngle={2} stroke={P.card2} strokeWidth={2}
+                      label={t => t.peso >= 6 ? t.peso.toFixed(0) + "%" : ""} labelLine={false}>
+                      {trozos.map(t => <Cell key={t.k} fill={t.color} />)}
+                    </Pie>
+                    <Tooltip contentStyle={TIP().contentStyle} labelStyle={TIP().labelStyle} itemStyle={TIP().itemStyle}
+                      formatter={(v, n, pl) => [fE(v) + "  (" + pl.payload.peso.toFixed(1) + " %)", pl.payload.nombre]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="cd" style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 8 }}>
+              <div style={{ fontSize: 9, color: P.t4, textTransform: "uppercase", letterSpacing: 1 }}>Leyenda</div>
+              {trozos.map(t => (
+                <div key={t.k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+                  {chip(t.color)}
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.nombre}</span>
+                  <strong style={{ fontFamily: "monospace" }}>{t.peso.toFixed(1)}%</strong>
+                  <span style={{ fontFamily: "monospace", color: P.t3, width: 82, textAlign: "right" }}>{fE(t.valor)}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, borderTop: "1px solid " + P.l2, paddingTop: 8, marginTop: 2 }}>
+                <span style={{ flex: 1, fontWeight: 700 }}>TOTAL</span>
+                <strong style={{ fontFamily: "monospace" }}>100%</strong>
+                <span style={{ fontFamily: "monospace", fontWeight: 700, width: 82, textAlign: "right" }}>{fE(tSel)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: P.t2, textTransform: "uppercase", letterSpacing: 1 }}>Objetivo y ajuste</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button className="bs" onClick={fijarActual}>Fijar el actual</button>
+              <button className="bs" onClick={repartirIgual}>Repartir igual</button>
+              {hayObj && <button className="bs" onClick={limpiar}>Quitar objetivos</button>}
+            </div>
+          </div>
+          <div className="cd" style={{ padding: 0 }}>
+            <div className="rtable"><table><thead><tr>
+              {eje === "Activo" && <th style={{ cursor: "default", width: 26, textAlign: "center" }}>{maestro}</th>}
+              {th("nombre", eje)}
+              {th("valor", "Valor", true)}
+              {th("peso", "Peso real", true)}
+              {th("oNorm", "Objetivo %", true)}
+              {th("objEur", "Importe", true)}
+              {th("ajuste", "Ajuste", true)}
+            </tr></thead><tbody>
+              {ordenadas.map(t => (
+                <tr key={t.k}>
+                  {eje === "Activo" && <td style={{ textAlign: "center" }}>
+                    <input type="checkbox" checked={true} onChange={e => marcar(t.k, e.target.checked)} style={{ cursor: "pointer" }} />
+                  </td>}
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      {chip(t.color)}
+                      <div><div style={{ fontWeight: 600 }}>{t.nombre}</div><div style={{ fontSize: 9, color: P.t4 }}>{t.sub}</div></div>
+                    </div>
+                  </td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>{fE(t.valor)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace" }}>{t.peso.toFixed(1)}%</td>
+                  <td style={{ textAlign: "right" }}>
+                    <input className="ip" type="number" step="0.1" min="0" max="100" placeholder="—"
+                      value={objEje[t.k] ?? ""} onChange={e => setObjetivo(t.k, e.target.value)}
+                      style={{ width: 74, textAlign: "right", padding: "4px 7px", fontSize: 11, fontFamily: "monospace" }} />
+                  </td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: t.objEur == null ? P.t5 : P.ac }}>
+                    {t.objEur == null ? "—" : fE(t.objEur)}
+                  </td>
+                  <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: t.ajuste == null ? P.t5 : t.ajuste > 0 ? P.up : t.ajuste < 0 ? P.down : P.t3 }}>
+                    {t.ajuste == null ? "—" : (t.ajuste > 0 ? "+" : "") + fE(t.ajuste)}
+                  </td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "2px solid " + P.l3 }}>
+                {eje === "Activo" && <td />}
+                <td style={{ fontWeight: 800 }}>TOTAL</td>
+                <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{fE(tSel)}</td>
+                <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>100%</td>
+                <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: !hayObj ? P.t5 : Math.abs(sumaObj - 100) < 0.05 ? P.up : P.clc }}>{hayObj ? sumaObj.toFixed(1) + "%" : "—"}</td>
+                <td style={{ textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: P.ac }}>{hayObj ? fE(totalObj) : "—"}</td>
+                <td />
+              </tr>
+            </tbody></table></div>
+
+            <div className="mob-card" style={{ padding: 12 }}>
+              {eje === "Activo" && <label style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 11, color: P.t2, padding: "0 0 10px", cursor: "pointer" }}>
+                {maestro}<span>{todos ? "Desmarcar todos" : "Marcar todos"}</span>
+              </label>}
+              {ordenadas.map(t => (
+                <div key={t.k} className="mob-item">
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                    <span style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
+                      {eje === "Activo" && <input type="checkbox" checked={true} onChange={e => marcar(t.k, e.target.checked)} />}
+                      {chip(t.color)}{t.nombre}
+                    </span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{t.peso.toFixed(1)}%</span>
+                  </div>
+                  <div className="mob-row"><span className="mob-lbl">Valor</span><span style={{ fontFamily: "monospace" }}>{fE(t.valor)}</span></div>
+                  <div className="mob-row">
+                    <span className="mob-lbl">Objetivo %</span>
+                    <input className="ip" type="number" step="0.1" placeholder="—" value={objEje[t.k] ?? ""}
+                      onChange={e => setObjetivo(t.k, e.target.value)} style={{ width: 80, textAlign: "right", padding: "4px 7px", fontSize: 11 }} />
+                  </div>
+                  {t.objEur != null && <div className="mob-row"><span className="mob-lbl">Importe</span>
+                    <span style={{ fontFamily: "monospace", color: P.ac }}>{fE(t.objEur)}</span></div>}
+                  {t.ajuste != null && <div className="mob-row"><span className="mob-lbl">Ajuste</span>
+                    <span style={{ fontFamily: "monospace", color: t.ajuste > 0 ? P.up : P.down }}>{(t.ajuste > 0 ? "+" : "") + fE(t.ajuste)}</span></div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>}
+
+      {/* Los desmarcados quedan aquí, para poder volver a meterlos */}
+      {eje === "Activo" && filtrando && <div className="cd" style={{ padding: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <div style={{ fontSize: 9, color: P.t4, textTransform: "uppercase", letterSpacing: 1 }}>Fuera del cálculo · {fuera.length}</div>
+          <button className="bs" style={{ padding: "4px 10px", fontSize: 10 }} onClick={marcarTodos}>Meterlos todos</button>
+        </div>
+        {fuera.map(a => (
+          <label key={a.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", fontSize: 11, cursor: "pointer", opacity: .65 }}>
+            <input type="checkbox" checked={false} onChange={() => marcar(a.id, true)} style={{ cursor: "pointer" }} />
+            <span style={{ flex: 1, minWidth: 0 }}>{a.name} <span style={{ color: P.t4 }}>· {a.platform} · {a.type}</span></span>
+            <span style={{ fontFamily: "monospace", color: P.t3 }}>{fE(a.valorActual)}</span>
+          </label>
+        ))}
+      </div>}
+
+      <div className="cd" style={{ background: `${P.rv}0d`, borderColor: `${P.rv}2b`, padding: 12 }}>
+        <p style={{ margin: 0, fontSize: 10, color: P.t4, lineHeight: 1.6 }}>
+          Los pesos se calculan <strong style={{ color: P.rv }}>solo sobre los activos marcados</strong> y suman 100 entre
+          ellos. Marca los indexados en la vista Activo y el quesito te da el reparto entre ellos, no diluido
+          en el resto de la cartera.<br />
+          <strong style={{ color: P.rv }}>Importe</strong> es lo que le toca a cada uno con el % que has puesto, sobre el dinero a
+          repartir. <strong style={{ color: P.rv }}>Ajuste</strong> es la diferencia con lo que tiene ahora: verde lo que falta por
+          meter, rojo lo que sobra.<br />
+          Si dejas el dinero a repartir vacío, los ajustes suman cero y rebalanceas moviendo de los rojos a
+          los verdes. Si pones una cifra mayor, los ajustes te dicen cuánto meter en cada uno para llegar a
+          ese reparto.<br />
+          La selección y los objetivos se guardan en este navegador. Los objetivos, uno por eje.
         </p>
       </div>
     </div>

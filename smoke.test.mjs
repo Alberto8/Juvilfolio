@@ -43,7 +43,7 @@ console.error = orig;
 const btn = t => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === t);
 const click = async (b, ms) => { b.click(); await new Promise(r => setTimeout(r, ms || 300)); };
 
-for (const nombre of ['Cartera', 'Fondos Mensual', 'Comparativa', 'Anualidades', 'Ajustes', 'Dashboard']) {
+for (const nombre of ['Cartera', 'Fondos Mensual', 'Comparativa', 'Anualidades', 'Balanceo', 'Ajustes', 'Dashboard']) {
   const b = btn(nombre);
   if (!b) { console.log(nombre.padEnd(17) + 'BOTON NO ENCONTRADO'); continue; }
   const antes = errores.length;
@@ -64,6 +64,46 @@ await click(btn('Cartera'));
 await probar('modal + Activo', '+ Activo');
 await click(btn('Fondos Mensual'));
 await probar('modal + Mes', '+ Mes');
+
+// Interacciones del Balanceo: ordenar, desmarcar, cambiar de eje, fijar objetivos
+await click(btn('Balanceo'));
+{
+  const antes = errores.length;
+  const ths = [...document.querySelectorAll('th')].filter(t => /Valor|Peso real|Ajuste/.test(t.textContent));
+  for (const t of ths) { t.click(); await new Promise(r => setTimeout(r, 120)); }
+  console.log('ordenar columnas'.padEnd(17) + (errores.length > antes ? '   ERROR' : '   ok (' + ths.length + ' cabeceras)'));
+}
+{
+  const antes = errores.length;
+  const cb = document.querySelector('tbody input[type=checkbox]');
+  if (cb) { cb.click(); await new Promise(r => setTimeout(r, 300)); }
+  console.log('desmarcar activo'.padEnd(17) + (cb ? (errores.length > antes ? '   ERROR' : '   ok') : '   no habia check'));
+}
+// Check maestro: partiendo de TODOS marcados, debe desmarcarlos y bajarlos
+await click(btn('Marcar todos'), 350);
+{
+  const maestro = () => document.querySelector('thead input[type=checkbox]');
+  const m = maestro();
+  if (!m) console.log('check maestro'.padEnd(19) + 'NO ENCONTRADO');
+  else {
+    const antes = errores.length;
+    const filasAntes = document.querySelectorAll('tbody tr').length;
+    console.log('todos marcados'.padEnd(19) + 'maestro checked=' + m.checked + ' · filas=' + filasAntes);
+    await click(m, 400);
+    const h = document.getElementById('root').innerHTML;
+    console.log('pulsar maestro'.padEnd(19) + (errores.length > antes ? 'ERROR'
+      : 'bloque "Fuera del calculo": ' + h.includes('Fuera del c') + ' · tabla desaparece: ' + (document.querySelectorAll('tbody tr').length === 0)));
+    const sueltos = [...document.querySelectorAll('input[type=checkbox]')].filter(c => !c.checked).length;
+    console.log('desmarcados'.padEnd(19) + sueltos + ' checks sin marcar abajo');
+    const uno = [...document.querySelectorAll('input[type=checkbox]')].find(c => !c.checked);
+    if (uno) { await click(uno, 400); console.log('remarcar uno'.padEnd(19) + 'filas en tabla=' + document.querySelectorAll('tbody tr').length); }
+    await click(btn('Marcar todos'), 350);
+    console.log('volver a todos'.padEnd(19) + 'maestro checked=' + (maestro() && maestro().checked));
+  }
+}
+await probar('fijar objetivos', 'Fijar el actual');
+for (const e of ['Categoría', 'Tipo', 'Plataforma', 'Activo']) await probar('eje ' + e, e);
+await probar('marcar todos', 'Marcar todos');
 
 const tog = [...document.querySelectorAll('button')].find(b => /☀|🌙/.test(b.textContent));
 if (tog) { const n = errores.length; await click(tog, 400); console.log('cambio de tema'.padEnd(17) + (errores.length > n ? '   ERROR' : '   ok')); }

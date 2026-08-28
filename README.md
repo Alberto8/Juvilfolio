@@ -225,3 +225,62 @@ prueba sí las pilla — se escribió justo para cazar una de ellas.
 Los dobles están en `.smoke/` y se inyectan con `resolve.alias` de Vite, porque los
 namespaces de módulos ESM son de solo lectura y no se pueden sobrescribir con `Object.assign`.
 No toca Supabase ni la red.
+
+## Pestaña Balanceo
+Va justo antes de Ajustes. Cuatro ejes, y **Activo** es el que abre por defecto porque el
+uso principal es marcar los indexados y ver el reparto entre ellos: **Activo**,
+**Categoría** (RV/RF), **Tipo** y **Plataforma**.
+
+### La selección es lo que manda
+En la vista Activo cada fila lleva un check. **Los pesos se calculan solo sobre lo marcado y
+suman 100 entre ellos**, no diluidos en el resto de la cartera — que es justo lo que hace
+falta para balancear los indexados entre sí. La cabecera dice cuántos activos entran, su
+valor y qué porcentaje de la cartera representan.
+
+Los desmarcados aparecen en un bloque **"Fuera del cálculo"** al final, con su check para
+devolverlos y un botón "Meterlos todos". Ese bloque también sale con la selección vacía,
+que es lo que se ve al pulsar el check maestro estando todo marcado.
+
+> **Cuidado al tocar la selección:** `sel === null` significa "nunca se ha elegido nada,
+> entran todos", y `sel === []` significa "se han desmarcado todos a propósito". Son estados
+> distintos. Tratarlos igual —que es lo que hacía `!sel || !sel.length`— deja el check
+> maestro sin efecto: desmarcabas todo y seguía saliendo todo.
+La selección filtra también los otros tres ejes, así que se puede marcar los indexados en
+Activo y luego mirar su reparto por plataforma.
+
+### Colores: uno por fondo
+El color se asigna por **identidad del fondo** (su ISIN, o el nombre si no lo tiene), no por
+tipo de activo. Así el MSCI World de MyInvestor y el de Trade Republic comparten color —son
+el mismo fondo— y dos fondos distintos nunca lo comparten.
+
+`coloresPorFondo` respeta primero los tonos con significado (MSCI azul, Emergentes rosa,
+Clase C ámbar, Groupama cian) y reparte el resto de `P.rueda` saltándose los ya ocupados.
+La rueda tiene doce colores por tema; con más de doce fondos empezarían a repetirse.
+
+### Dinero a repartir e importe
+Caja **Dinero a repartir** sobre la tabla. Vacía, se reparte el valor real de lo marcado;
+con una cifra, se reparte esa — sirve para planificar una aportación futura sin tocar la
+cartera.
+
+La columna **Importe** es lo que le toca a cada activo con el % que has puesto, sobre ese
+dinero. **Ajuste** es la diferencia con lo que tiene ahora: verde lo que falta por meter,
+rojo lo que sobra. Con el dinero en vacío los ajustes suman cero y rebalanceas moviendo de
+los rojos a los verdes; con una cifra mayor te dicen cuánto meter en cada uno.
+
+### Objetivo y ajuste
+Tabla con peso real, **objetivo %** editable, importe y ajuste. Todas las columnas ordenan
+al pulsar la cabecera, y el check de la cabecera marca o desmarca todo de una (queda a
+medias cuando solo hay algunos marcados).
+
+Los objetivos se miden **normalizados** sobre su propia suma, así que 60/40 y 6/4 dan lo
+mismo y no hace falta cuadrar a 100. Atajos **Fijar el actual** y **Repartir igual**.
+
+Selección, objetivos y dinero a repartir van en `localStorage`
+(`pt-balanceo-sel`, `pt-objetivos` —uno por eje— y `pt-balanceo-dinero`).
+
+### Las gráficas no se seleccionan
+`user-select: none` sobre `.recharts-wrapper`, `.recharts-surface` y `.recharts-text`. Sin
+eso, al arrastrar el ratón sobre una gráfica el navegador resalta el texto del SVG y aparece
+un recuadro oscuro encima.
+
+

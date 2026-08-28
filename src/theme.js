@@ -39,6 +39,8 @@ export const PAL = {
     my: "#0ea5e9",
     tr: "#ff6b35",
     shadow: "none",
+    rueda: ["#60a5fa", "#f472b6", "#fbbf24", "#34d399", "#a78bfa", "#22d3ee",
+            "#f97316", "#818cf8", "#4ade80", "#fb7185", "#e879f9", "#facc15"],
   },
   light: {
     bg: "linear-gradient(160deg,#f7f9fc,#eef2f8,#f4f6fa)",
@@ -76,6 +78,8 @@ export const PAL = {
     my: "#0369a1",
     tr: "#c2410c",
     shadow: "0 1px 2px rgba(15,23,42,.06)",
+    rueda: ["#1d4ed8", "#be185d", "#b45309", "#047857", "#6d28d9", "#0e7490",
+            "#c2410c", "#4f46e5", "#15803d", "#be123c", "#a21caf", "#a16207"],
   },
 };
 
@@ -126,6 +130,11 @@ export const css = P => `
     .mob-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px}
     .mob-lbl{color:${P.t3};font-size:10px}
   }
+  .recharts-wrapper,.recharts-surface,.recharts-text,.recharts-legend-wrapper{
+    user-select:none;-webkit-user-select:none;-moz-user-select:none
+  }
+  .recharts-wrapper *{outline:none}
+  .recharts-sector,.recharts-rectangle{cursor:default}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   .pu{animation:pulse 1.2s ease-in-out infinite}
 `;
