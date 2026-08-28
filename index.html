@@ -4,7 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Portfolio Tracker</title>
-  <style>body{margin:0;background:#0b0f1a}</style>
+  <script>
+    // El tema se aplica antes de pintar, para que no haya destello del color contrario
+    try { document.documentElement.dataset.theme = localStorage.getItem('pt-theme') === 'light' ? 'light' : 'dark' } catch (e) {}
+  </script>
+  <style>
+    html[data-theme="dark"] body { margin:0; background:#0b0f1a }
+    html[data-theme="light"] body { margin:0; background:#f7f9fc }
+  </style>
 </head>
 <body>
   <div id="root"></div>

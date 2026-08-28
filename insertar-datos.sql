@@ -1,4 +1,15 @@
 -- ============================================
+-- OJO: FICHERO SEMILLA, NO ES EL ESTADO ACTUAL
+-- ============================================
+-- Estos son los datos con los que se arrancó el proyecto. NO reflejan
+-- lo que hay ahora: los meses y valores se han ido editando desde la app.
+-- La verdad está en Supabase. Para ver el estado real:
+--   SELECT * FROM assets ORDER BY platform, name;
+--   SELECT * FROM fund_monthly ORDER BY month;
+-- No vuelvas a ejecutar este fichero: empieza con DELETE y se lo llevaría todo.
+-- ============================================
+
+-- ============================================
 -- PORTFOLIO TRACKER - INSERTAR DATOS REALES
 -- ============================================
 -- PASO 1: Ejecuta esto primero para obtener tu user_id:
