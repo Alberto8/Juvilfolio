@@ -61,6 +61,13 @@ function planAssetsDe(assets, contribs) {
   const ids = new Set(contribs.map(c => c.assetId));
   return ordenPlan(assets.filter(a => ids.has(a.id)));
 }
+
+// Todo lo que tiene aportaciones anotadas: el plan mensual más las compras
+// puntuales (una acción comprada un mes concreto también es una aportación).
+function histAssetsDe(assets, contribs, planAssets) {
+  const ids = new Set([...contribs.map(c => c.assetId), ...planAssets.map(a => a.id)]);
+  return ordenPlan(assets.filter(a => ids.has(a.id)));
+}
 const ordenPlan = list => [...list].sort((a, b) =>
   corto(a).localeCompare(corto(b)) || a.platform.localeCompare(b.platform));
 
@@ -125,10 +132,11 @@ function enrichPlan(planAssets, contribs, nav) {
 // congelado (nadie lo actualiza tras cada aportación) y como
 //   valor = precio × participaciones
 // el valor salía por debajo y la rentabilidad daba negativa siendo positiva.
-function enrichAssets(assets, plan) {
+function enrichAssets(assets, plan, planIds) {
   const last = plan.length ? plan[plan.length - 1] : null;
   if (!last) return assets;
   return assets.map(a => {
+    if (planIds && !planIds.has(a.id)) return a;
     const d = last.per[a.id];
     if (!d || !(d.apAcum > 0)) return a;
     const partFM = d.units > 0;
@@ -198,7 +206,7 @@ export default function App({ session }) {
       const cc = co.length || db.contribSupported() ? co : contribsDeFundMonthly(f, a);
       setContribs(cc);
       // El NAV mensual no bloquea la carga: si Yahoo no responde, la pestaña avisa
-      const pa = planAssetsDe(a, cc);
+      const pa = histAssetsDe(a, cc, planAssetsDe(a, cc));
       if (pa.length) {
         try { setNav(await db.fetchNavSeries(pa.map(x => ({ id: x.id, ticker: x.ticker, name: x.name })))); }
         catch (e) { console.warn("fetchNavSeries:", e.message); }
@@ -260,9 +268,11 @@ export default function App({ session }) {
   }
 
   const planAssets = useMemo(() => planAssetsDe(assets, contribs), [assets, contribs]);
-  const plan = useMemo(() => enrichPlan(planAssets, contribs, nav), [planAssets, contribs, nav]);
+  const histAssets = useMemo(() => histAssetsDe(assets, contribs, planAssets), [assets, contribs, planAssets]);
+  const plan = useMemo(() => enrichPlan(histAssets, contribs, nav), [histAssets, contribs, nav]);
+  const planIds = useMemo(() => new Set(planAssets.map(a => a.id)), [planAssets]);
   // Vista de activos con el aportado y las participaciones del plan ya aplicados
-  const av = useMemo(() => enrichAssets(assets, plan), [assets, plan]);
+  const av = useMemo(() => enrichAssets(assets, plan, planIds), [assets, plan, planIds]);
 
   const fetchQuotes = useCallback(async () => {
     if (!assets.length) return;
@@ -344,7 +354,7 @@ export default function App({ session }) {
       <style>{css(P)}</style>
       <header style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, borderBottom: "1px solid " + P.l1 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 17, fontWeight: 800, fontStyle: "italic", background: `linear-gradient(135deg,${P.ac},${P.up})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Portfolio Tracker</h1>
+          <h1 style={{ margin: 0, fontSize: 17, fontWeight: 800, fontStyle: "italic", background: `linear-gradient(135deg,${P.ac},${P.up})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>JubilFolio</h1>
           <div style={{ fontSize: 9, color: P.t5 }}>Cartera personal</div>
         </div>
         <div style={{ display: "flex", gap: 2, background: P.seg, padding: 3, borderRadius: 8, flexWrap: "wrap" }}>
@@ -357,8 +367,8 @@ export default function App({ session }) {
         {tab === "Dashboard" && <Dash assets={av} plats={plats} byType={byType} byCat={byCat} tI={tI} tV={tV} tG={tG} plan={plan} fe={fetching} fq={fetchQuotes} lu={lastUp} qmsg={quoteMsg} />}
         {tab === "Cartera" && <Cart assets={av} saveAsset={saveAsset} removeAsset={removeAsset} fe={fetching} fq={fetchQuotes} lu={lastUp} />}
         {tab === "Fondos Mensual" && <FondosM planAssets={planAssets} plan={plan} nav={nav} contribOk={db.contribSupported()} saveMonth={saveMonth} removeMonth={removeMonth} />}
-        {tab === "Comparativa" && <Comp plan={plan} />}
-        {tab === "Anualidades" && <Anu assets={av} plan={plan} planAssets={planAssets} snaps={snaps} tI={tI} tV={tV} tG={tG} />}
+        {tab === "Comparativa" && <Comp plan={plan} planAssets={histAssets} />}
+        {tab === "Anualidades" && <Anu assets={av} plan={plan} planAssets={histAssets} snaps={snaps} tI={tI} tV={tV} tG={tG} />}
         {tab === "Balanceo" && <Bal assets={av} tV={tV} />}
         {tab === "Ajustes" && <Sett loadAll={loadAll} session={session} assets={av} toggleManual={toggleManual} />}
       </main>
@@ -709,20 +719,98 @@ function FondosM({ planAssets, plan, nav, contribOk, saveMonth, removeMonth }) {
   );
 }
 
-function Comp({ plan }) {
-  const data = plan.filter(m => m.tot.apAcum > 0);
-  if (!data.length) return <div className="cd"><p style={{ color: P.t4 }}>Sin datos en Fondos Mensual</p></div>;
+const CMP_KEY = "pt-comparativa-sel";
+
+// Por defecto solo el MSCI y el Emergentes de MyInvestor: es el núcleo del plan
+// y comparar todo junto diluye la señal.
+const POR_DEFECTO = a => a.platform === "MyInvestor" && (a.ticker === "IE00BYX5NX33" || a.ticker === "IE00BYX5M476");
+
+function Comp({ plan, planAssets }) {
+  const [sel, setSel] = useState(() => leerJSON(CMP_KEY, null));
+  const elegidos = useMemo(() => {
+    const ids = sel == null ? planAssets.filter(POR_DEFECTO).map(a => a.id) : sel;
+    const set = new Set(ids);
+    const out = planAssets.filter(a => set.has(a.id));
+    // Si el guardado se queda sin coincidencias (activos borrados), se vuelve al defecto
+    return out.length || sel != null ? out : planAssets.filter(POR_DEFECTO);
+  }, [sel, planAssets]);
+
+  const marcado = a => elegidos.some(x => x.id === a.id);
+  function marcar(a, on) {
+    const base = elegidos.map(x => x.id);
+    const sig = on ? [...new Set([...base, a.id])] : base.filter(x => x !== a.id);
+    setSel(sig); guardarJSON(CMP_KEY, sig);
+  }
+
+  const porPlataforma = {};
+  for (const a of planAssets) (porPlataforma[a.platform] = porPlataforma[a.platform] || []).push(a);
+
+  // La serie se recalcula sobre los fondos marcados: aportación del mes,
+  // acumulado y valor real salen de sumar solo esos.
+  const serie = useMemo(() => plan.map(m => {
+    let ap = 0, acum = 0, val = 0, acumConVal = 0;
+    for (const a of elegidos) {
+      const d = m.per[a.id];
+      if (!d) continue;
+      ap += d.ap; acum += d.apAcum;
+      if (d.val > 0) { val += d.val; acumConVal += d.apAcum; }
+    }
+    return { month: m.month, ap: r2(ap), acum: r2(acum), val: r2(val), g: val > 0 ? r2(val - acumConVal) : 0, hasVal: val > 0 };
+  }).filter(m => m.acum > 0), [plan, elegidos]);
+
+  const selector = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+      {Object.entries(porPlataforma).map(([plat, list]) => (
+        <div key={plat} style={{ background: P.seg, borderRadius: 8, padding: "5px 9px" }}>
+          <div style={{ fontSize: 8, fontWeight: 700, color: PC()[plat] || P.t3, textTransform: "uppercase", letterSpacing: .5, marginBottom: 3 }}>{plat}</div>
+          <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+            {list.map(a => (
+              <label key={a.id} title={a.name} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, cursor: "pointer", color: marcado(a) ? tono(a) : P.t4 }}>
+                <input type="checkbox" checked={marcado(a)} onChange={e => marcar(a, e.target.checked)} style={{ cursor: "pointer", margin: 0 }} />
+                {corto(a)}
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const cabecera = (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Comparativa</h2>
+        <div style={{ fontSize: 9, color: P.t4, marginTop: 2 }}>
+          {elegidos.length
+            ? elegidos.map(a => corto(a) + " " + abrev(a.platform)).join(" + ")
+            : "Marca al menos un fondo"}
+        </div>
+      </div>
+      {selector}
+    </div>
+  );
+
+  if (!serie.length) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {cabecera}
+      <div className="cd"><p style={{ margin: 0, fontSize: 11, color: P.t4 }}>
+        {elegidos.length ? "Los fondos marcados no tienen aportaciones registradas." : "Marca arriba los fondos que quieras comparar."}
+      </p></div>
+    </div>
+  );
+
+  const data = serie;
   const rows = data.map((m, idx) => {
     let v3 = 0, v9 = 0;
-    for (let j = 0; j <= idx; j++) { const ap = data[j].tot.ap; const mi = idx - j; v3 += ap * Math.pow(1 + 0.03 / 12, mi); v9 += ap * Math.pow(1 + 0.09 / 12, mi); }
+    for (let j = 0; j <= idx; j++) { const ap = data[j].ap; const mi = idx - j; v3 += ap * Math.pow(1 + 0.03 / 12, mi); v9 += ap * Math.pow(1 + 0.09 / 12, mi); }
     v3 = r2(v3); v9 = r2(v9);
-    const ac = m.tot.apAcum;
-    return { label: fMN(m.month), ap: ac, real: m.tot.val, gR: m.tot.g, v3, v9, g3: r2(v3 - ac), g9: r2(v9 - ac) };
+    const ac = m.acum;
+    return { label: fMN(m.month), ap: ac, real: m.val, gR: m.g, v3, v9, g3: r2(v3 - ac), g9: r2(v9 - ac) };
   });
   const cd = rows.map(r => ({ label: r.label, "Solo aportación": r.ap, "Cartera Real": r.real, "Al 3%": r.v3, "Al 9%": r.v9 }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Comparativa — Plan mensual</h2>
+      {cabecera}
       <div className="cd" style={{ padding: 0 }}>
         <div className="rtable"><table><thead><tr>
           <th>Mes</th>

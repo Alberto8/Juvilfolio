@@ -22,7 +22,7 @@ export default function Login() {
   return (
     <div style={{ minHeight:'100vh', background:P.bg, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'system-ui' }}>
       <div style={{ background:P.card, border:'1px solid '+P.l2, borderRadius:20, padding:40, width:360, maxWidth:'90%', boxShadow:P.shadow }}>
-        <h1 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, fontStyle:'italic', background:`linear-gradient(135deg,${P.ac},${P.up})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textAlign:'center' }}>Portfolio Tracker</h1>
+        <h1 style={{ margin:'0 0 6px', fontSize:24, fontWeight:800, fontStyle:'italic', background:`linear-gradient(135deg,${P.ac},${P.up})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textAlign:'center' }}>JubilFolio</h1>
         <p style={{ textAlign:'center', color:P.t4, fontSize:12, margin:'0 0 28px' }}>Inicia sesión para acceder a tu cartera</p>
         <form onSubmit={handleLogin} style={{ display:'flex', flexDirection:'column', gap:14 }}>
           <div><label style={{ fontSize:11, color:P.t3, display:'block', marginBottom:4 }}>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required autoComplete="email" style={inp} /></div>

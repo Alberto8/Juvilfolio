@@ -284,3 +284,28 @@ eso, al arrastrar el ratón sobre una gráfica el navegador resalta el texto del
 un recuadro oscuro encima.
 
 
+
+## Aportaciones: plan mensual y compras puntuales
+`fund_contributions` guarda cualquier aportación, no solo las del plan recurrente. Una acción
+comprada un mes concreto es una aportación de ese mes, así que Anualidades y Comparativa
+pueden atribuirla a su año en lugar de darla por "sin histórico". Ver
+`historico-compras.sql`.
+
+Hay **dos conceptos separados**, y conviene no mezclarlos:
+
+| | Qué decide | Dónde se marca |
+|---|---|---|
+| `assets.plan_mensual` | Si el activo tiene columna en la pestaña Fondos Mensual | Cartera → clic en el activo |
+| Tener filas en `fund_contributions` | Si entra en el histórico de Anualidades y Comparativa | Fondos Mensual, o SQL para compras puntuales |
+
+`enrichAssets` solo pisa `aportado` y `participaciones` de los activos del plan mensual
+(`planIds`). En una acción con contrasplit —Amper— el modelo de participaciones daría un
+número falso, así que ahí manda lo que haya escrito.
+
+## Comparativa: selector de fondos
+Arriba a la derecha, agrupado por plataforma. Por defecto **MSCI + Emergentes de MyInvestor**:
+es el núcleo del plan y comparar los seis fondos juntos diluye la señal.
+
+La serie se recalcula sobre lo marcado — aportación del mes, acumulado y valor real salen de
+sumar solo esos fondos — así que el 3 % y el 9 % se comparan contra lo que de verdad se ha
+metido en ellos. La selección va en `localStorage` (`pt-comparativa-sel`).
