@@ -88,7 +88,12 @@ await click(btn('Fondos Mensual'), 350);
   console.log('mensual plegado'.padEnd(19) + 'filas=' + filasIni + (filaAno ? ' · fila de año: ' + filaAno.textContent.trim().slice(0, 22) : ' · SIN fila de año'));
   if (filaAno) {
     await click(filaAno, 350);
-    console.log('abrir un año'.padEnd(19) + (errores.length > antes ? 'ERROR' : 'filas=' + document.querySelectorAll('tbody tr').length));
+    {
+      const txt = [...document.querySelectorAll('tbody tr')].map(r => r.textContent.trim().slice(0, 10));
+      const iAno = txt.findIndex(t => t.indexOf('2026') === 0 || t.indexOf('2026') === 1);
+      console.log('abrir un año'.padEnd(19) + 'filas=' + txt.length + ' · orden=[' + txt.join(' | ') + ']');
+      console.log('año al final'.padEnd(19) + (iAno === txt.length - 1 || iAno === txt.length - 2 ? 'SI, los meses quedan encima' : 'NO, indice ' + iAno));
+    }
     await click(filaAno, 300);
     console.log('cerrarlo'.padEnd(19) + 'filas=' + document.querySelectorAll('tbody tr').length);
   }

@@ -341,11 +341,24 @@ acumulado final (1.460 + 3.484 = 4.944 €):
 | 2025 (ago–dic) | 1.460,00 | 1.460,00 | 1.505,06 | +45,06 (+3,09 %) |
 | 2026 (ene–jul) | 3.484,00 | 4.944,00 | 5.491,88 | +502,82 (+10,08 %) |
 
+**Los meses salen por encima de su fila de año**, que queda como subtotal. Así la tabla se
+lee siempre igual —cantidades arriba, total debajo— y encaja con la fila TOTAL que cierra
+todo. El chevron apunta hacia arriba al abrir, hacia donde aparecen los meses.
+
 La fila **TOTAL** del final solo aparece con más de un año, y compara el acumulado de toda
 la serie contra el valor de hoy.
 
-En móvil el año es una tarjeta plegable: se arranca con una tarjeta por año en lugar de una
-por mes, y los meses aparecen indentados al abrirlo.
+En móvil igual: los meses son tarjetas indentadas encima de la tarjeta del año.
+
+### Cada pestaña re-suma su propio total
+`enrichPlan` calcula la serie sobre **todos** los activos con aportaciones anotadas, compras
+puntuales de acciones incluidas, porque Anualidades y Comparativa las necesitan. Pero
+Fondos Mensual solo tiene columna para los del plan mensual.
+
+Por eso existe `totalDe(fila, lista)`: cada pestaña re-suma sobre los activos que de verdad
+muestra. Usar el `tot` de la serie en una tabla que enseña un subconjunto hace que el TOTAL
+cuente filas invisibles — pasaba, y el TOTAL de sept-25 salía 1.226,38 € en vez de 237,50
+porque se le colaba la compra de Nextil, que no tiene columna ahí.
 
 ## Quién manda en `aportado`
 Hay dos sitios donde vive lo aportado y conviene saber cuál gana, porque un cuadre entre
