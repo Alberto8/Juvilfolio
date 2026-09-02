@@ -79,6 +79,24 @@ await click(btn('Balanceo'));
   if (cb) { cb.click(); await new Promise(r => setTimeout(r, 300)); }
   console.log('desmarcar activo'.padEnd(17) + (cb ? (errores.length > antes ? '   ERROR' : '   ok') : '   no habia check'));
 }
+// Fondos Mensual: la tabla arranca plegada por año y los años se abren
+await click(btn('Fondos Mensual'), 350);
+{
+  const filasIni = document.querySelectorAll('tbody tr').length;
+  const antes = errores.length;
+  const filaAno = [...document.querySelectorAll('tbody tr')].find(r => r.getAttribute('role') === 'button');
+  console.log('mensual plegado'.padEnd(19) + 'filas=' + filasIni + (filaAno ? ' · fila de año: ' + filaAno.textContent.trim().slice(0, 22) : ' · SIN fila de año'));
+  if (filaAno) {
+    await click(filaAno, 350);
+    console.log('abrir un año'.padEnd(19) + (errores.length > antes ? 'ERROR' : 'filas=' + document.querySelectorAll('tbody tr').length));
+    await click(filaAno, 300);
+    console.log('cerrarlo'.padEnd(19) + 'filas=' + document.querySelectorAll('tbody tr').length);
+  }
+  await probar('abrir años', 'Abrir años');
+  await probar('plegar años', 'Plegar años');
+}
+await click(btn('Balanceo'), 350);
+
 // Check maestro: partiendo de TODOS marcados, debe desmarcarlos y bajarlos
 await click(btn('Marcar todos'), 350);
 {

@@ -39,16 +39,8 @@ JOIN assets a ON a.id = c.asset_id
 WHERE a.ticker IN ('AMP', 'NXT', 'OHLA', 'STORM-RF')
 ORDER BY c.month, a.name;
 
--- ── 3. CUADRE contra el aportado de cada activo ──
--- 'sin_anotar' debe salir ~0 en estos cuatro. En los fondos del plan mensual
--- también, porque sus aportaciones ya están en la tabla.
-SELECT a.name, a.platform, a.aportado,
-       COALESCE(SUM(c.aportado), 0)              AS anotado,
-       a.aportado - COALESCE(SUM(c.aportado), 0) AS sin_anotar
-FROM assets a
-LEFT JOIN fund_contributions c ON c.asset_id = a.id
-GROUP BY a.id, a.name, a.platform, a.aportado
-ORDER BY ABS(a.aportado - COALESCE(SUM(c.aportado), 0)) DESC;
-
--- Bitcoin y Groupama saldrán descuadrados: del Bitcoin no me has dado el mes de
--- compra, y Groupama todavía no existe como activo (ver diagnostico-groupama.sql).
+-- ── 3. CUADRE ───────────────────────────────
+-- Lo hace cuadrar-aportado.sql, que además dice quién manda en cada caso.
+-- Resumen: en los activos con plan_mensual manda fund_contributions y
+-- assets.aportado es un resto que la app ignora, así que una diferencia ahí no
+-- rompe nada. En los de fuera del plan manda assets.aportado.

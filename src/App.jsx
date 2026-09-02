@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Line, LineChart, BarChart, Bar, Cell, ReferenceLine, PieChart, Pie } from "recharts";
 import { supabase } from './supabase';
 import * as db from './db';
@@ -544,12 +544,71 @@ function Cart({ assets, saveAsset, removeAsset, fe, fq, lu }) {
   );
 }
 
+// Agrupa la serie mensual por año. La fila de año resume: lo aportado ese año,
+// el acumulado a su cierre y la ganancia del tramo (valor fin − valor inicio −
+// aportado del año), igual que en Anualidades.
+function agruparPorAno(plan, planAssets) {
+  const porAno = new Map();
+  for (const f of plan) {
+    const y = f.month.slice(0, 4);
+    const g = porAno.get(y) || { year: y, meses: [] };
+    g.meses.push(f);
+    porAno.set(y, g);
+  }
+  const anos = [...porAno.values()].sort((a, b) => a.year.localeCompare(b.year));
+  let prev = null;
+  for (const g of anos) {
+    const ini = prev ? prev.meses[prev.meses.length - 1] : null;
+    const fin = g.meses[g.meses.length - 1];
+    g.per = {};
+    for (const a of planAssets) {
+      const apAno = g.meses.reduce((x, m) => x + (m.per[a.id]?.ap || 0), 0);
+      const valIni = ini?.per[a.id]?.val || 0;
+      const valFin = fin.per[a.id]?.val || 0;
+      const gan = valFin > 0 ? r2(valFin - valIni - apAno) : 0;
+      const base = valIni + apAno;
+      g.per[a.id] = {
+        ap: r2(apAno), apAcum: fin.per[a.id]?.apAcum || 0, val: valFin, g: gan,
+        pct: base > 0 && valFin > 0 ? (gan / base) * 100 : 0, hasVal: valFin > 0,
+      };
+    }
+    const apAno = g.meses.reduce((x, m) => x + m.tot.ap, 0);
+    const vIni = ini ? ini.tot.val : 0, vFin = fin.tot.val;
+    const gan = vFin > 0 ? r2(vFin - vIni - apAno) : 0;
+    const base = vIni + apAno;
+    g.tot = {
+      ap: r2(apAno), apAcum: fin.tot.apAcum, val: vFin, g: gan,
+      pct: base > 0 && vFin > 0 ? (gan / base) * 100 : 0, hasVal: vFin > 0,
+    };
+    g.rango = mCorto(g.meses[0].month) + "–" + mCorto(fin.month) + " · " +
+      g.meses.length + (g.meses.length === 1 ? " mes" : " meses");
+    prev = g;
+  }
+  return anos;
+}
+
+const ANOS_KEY = "pt-meses-abiertos";
+
 function FondosM({ planAssets, plan, nav, contribOk, saveMonth, removeMonth }) {
   const [sh, setSh] = useState(false);
   const [eMonth, setEMonth] = useState(null);
   const [mes, setMes] = useState("");
   const [imp, setImp] = useState({});          // { assetId: "importe" }
   const [guardando, setGuardando] = useState(false);
+  // Arranca plegado: con varios años, lo que se mira casi siempre es el resumen
+  const [abiertos, setAbiertos] = useState(() => leerJSON(ANOS_KEY, []));
+  const anos = useMemo(() => agruparPorAno(plan, planAssets), [plan, planAssets]);
+  const abierto = y => abiertos.includes(y);
+  function plegar(y) {
+    const sig = abierto(y) ? abiertos.filter(x => x !== y) : [...abiertos, y];
+    setAbiertos(sig); guardarJSON(ANOS_KEY, sig);
+  }
+  const ultimo = anos.length ? anos[anos.length - 1] : null;
+  const todoAbierto = anos.length > 0 && anos.every(g => abierto(g.year));
+  function plegarTodo() {
+    const sig = todoAbierto ? [] : anos.map(g => g.year);
+    setAbiertos(sig); guardarJSON(ANOS_KEY, sig);
+  }
 
   function abrir(fila) {
     if (fila) {
@@ -597,7 +656,10 @@ function FondosM({ planAssets, plan, nav, contribOk, saveMonth, removeMonth }) {
             {nav ? "Valor y rentabilidad calculados con el valor liquidativo de Yahoo" : "Sin valor liquidativo de Yahoo — no se puede calcular el valor"}
           </div>
         </div>
-        <button className="bp" disabled={!planAssets.length} onClick={() => abrir(null)}>+ Mes</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {anos.length > 0 && <button className="bs" onClick={plegarTodo}>{todoAbierto ? "Plegar años" : "Abrir años"}</button>}
+          <button className="bp" disabled={!planAssets.length} onClick={() => abrir(null)}>+ Mes</button>
+        </div>
       </div>
 
       {!contribOk && <div className="cd" style={{ background: `${P.clc}12`, borderColor: `${P.clc}2b`, padding: 12 }}>
@@ -627,62 +689,152 @@ function FondosM({ planAssets, plan, nav, contribOk, saveMonth, removeMonth }) {
               {subcabeceras(true)}
             </tr>
           </thead><tbody>
-            {plan.map(f => (
-              <tr key={f.month} style={{ cursor: "pointer" }} onClick={() => abrir(f)}>
-                <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fMN(f.month)}</td>
-                {planAssets.map((a, i) => (
-                  <td key={"ap" + a.id} style={{ fontFamily: "monospace", color: tono(a) }}>
-                    {f.per[a.id]?.ap > 0 ? fE(f.per[a.id].ap) : "—"}
+            {anos.map(g => {
+              const ab = abierto(g.year);
+              const celdasAno = (
+                <>
+                  {planAssets.map(a => (
+                    <td key={"ay" + a.id} style={{ fontFamily: "monospace", color: tono(a) }}>
+                      {g.per[a.id]?.ap > 0 ? fE(g.per[a.id].ap) : "—"}
+                    </td>
+                  ))}
+                  <td style={{ fontFamily: "monospace", fontWeight: 700, background: P.ac + "0a" }}>{g.tot.ap > 0 ? fE(g.tot.ap) : "—"}</td>
+                  {planAssets.map((a, i) => (
+                    <td key={"acy" + a.id} style={{ ...(i === 0 ? GSEP() : null), fontFamily: "monospace", color: tono(a), background: tono(a) + "08" }}>
+                      {g.per[a.id]?.apAcum > 0 ? fE(g.per[a.id].apAcum) : "—"}
+                    </td>
+                  ))}
+                  <td style={{ fontFamily: "monospace", fontWeight: 700, background: P.ac + "0a" }}>{fE(g.tot.apAcum)}</td>
+                  {planAssets.map((a, i) => (
+                    <RentCell key={"ry" + a.id} g={g.per[a.id]?.g || 0} r={g.per[a.id]?.pct || 0}
+                      on={!!g.per[a.id]?.hasVal} tint={tono(a)} sep={i === 0} bold />
+                  ))}
+                  <RentCell g={g.tot.g} r={g.tot.pct} on={g.tot.hasVal} tint={P.ac} bold />
+                </>
+              );
+              return (
+                <Fragment key={g.year}>
+                  <tr onClick={() => plegar(g.year)} tabIndex={0} role="button" aria-expanded={ab}
+                    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); plegar(g.year); } }}
+                    style={{ cursor: "pointer", background: P.seg }}>
+                    <td style={{ fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderTop: "1px solid " + P.l3 }}>
+                      <span style={{ display: "inline-block", width: 13, color: ab ? P.ac : P.t3, transform: ab ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▶</span>
+                      {g.year}
+                      <span style={{ fontWeight: 400, fontSize: 9, color: P.t4, marginLeft: 7 }}>{g.rango}</span>
+                    </td>
+                    {celdasAno}
+                    <td style={{ borderTop: "1px solid " + P.l3 }} />
+                  </tr>
+                  {ab && g.meses.map(f => (
+                    <tr key={f.month} style={{ cursor: "pointer" }} onClick={() => abrir(f)}>
+                      <td style={{ whiteSpace: "nowrap", paddingLeft: 30, color: P.t2 }}>{fMN(f.month)}</td>
+                      {planAssets.map(a => (
+                        <td key={"ap" + a.id} style={{ fontFamily: "monospace", color: tono(a) }}>
+                          {f.per[a.id]?.ap > 0 ? fE(f.per[a.id].ap) : "—"}
+                        </td>
+                      ))}
+                      <td style={{ fontFamily: "monospace", fontWeight: 600, background: P.ac + "0a" }}>{f.tot.ap > 0 ? fE(f.tot.ap) : "—"}</td>
+                      {planAssets.map((a, i) => (
+                        <td key={"ac" + a.id} style={{ ...(i === 0 ? GSEP() : null), fontFamily: "monospace", color: tono(a), background: tono(a) + "08" }}>
+                          {f.per[a.id]?.apAcum > 0 ? fE(f.per[a.id].apAcum) : "—"}
+                        </td>
+                      ))}
+                      <td style={{ fontFamily: "monospace", fontWeight: 600, background: P.ac + "0a" }}>{fE(f.tot.apAcum)}</td>
+                      {planAssets.map((a, i) => (
+                        <RentCell key={"r" + a.id} g={f.per[a.id]?.g || 0} r={f.per[a.id]?.pct || 0}
+                          on={!!f.per[a.id]?.hasVal && f.per[a.id]?.apAcum > 0} tint={tono(a)} sep={i === 0} />
+                      ))}
+                      <RentCell g={f.tot.g} r={f.tot.pct} on={f.tot.hasVal} tint={P.ac} bold />
+                      <td><button className="bd" onClick={e => { e.stopPropagation(); removeMonth(f.month); }}>✕</button></td>
+                    </tr>
+                  ))}
+                </Fragment>
+              );
+            })}
+            {ultimo && anos.length > 1 && (
+              <tr style={{ borderTop: "2px solid " + P.l3 }}>
+                <td style={{ fontWeight: 800, whiteSpace: "nowrap" }}>TOTAL</td>
+                {planAssets.map(a => (
+                  <td key={"tp" + a.id} style={{ fontFamily: "monospace", color: tono(a), fontWeight: 600 }}>
+                    {ultimo.per[a.id]?.apAcum > 0 ? fE(ultimo.per[a.id].apAcum) : "—"}
                   </td>
                 ))}
-                <td style={{ fontFamily: "monospace", fontWeight: 600, background: P.ac + "0a" }}>{f.tot.ap > 0 ? fE(f.tot.ap) : "—"}</td>
+                <td style={{ fontFamily: "monospace", fontWeight: 800, background: P.ac + "0a" }}>{fE(ultimo.tot.apAcum)}</td>
                 {planAssets.map((a, i) => (
-                  <td key={"ac" + a.id} style={{ ...(i === 0 ? GSEP() : null), fontFamily: "monospace", color: tono(a), background: tono(a) + "08" }}>
-                    {f.per[a.id]?.apAcum > 0 ? fE(f.per[a.id].apAcum) : "—"}
+                  <td key={"tc" + a.id} style={{ ...(i === 0 ? GSEP() : null), fontFamily: "monospace", color: tono(a), fontWeight: 600, background: tono(a) + "08" }}>
+                    {ultimo.per[a.id]?.hasVal ? fE(ultimo.per[a.id].val) : "—"}
                   </td>
                 ))}
-                <td style={{ fontFamily: "monospace", fontWeight: 600, background: P.ac + "0a" }}>{fE(f.tot.apAcum)}</td>
-                {planAssets.map((a, i) => (
-                  <RentCell key={"r" + a.id} g={f.per[a.id]?.g || 0} r={f.per[a.id]?.pct || 0}
-                    on={!!f.per[a.id]?.hasVal && f.per[a.id]?.apAcum > 0} tint={tono(a)} sep={i === 0} />
-                ))}
-                <RentCell g={f.tot.g} r={f.tot.pct} on={f.tot.hasVal} tint={P.ac} bold />
-                <td><button className="bd" onClick={e => { e.stopPropagation(); removeMonth(f.month); }}>✕</button></td>
+                <td style={{ fontFamily: "monospace", fontWeight: 800, background: P.ac + "0a" }}>{ultimo.tot.hasVal ? fE(ultimo.tot.val) : "—"}</td>
+                {planAssets.map((a, i) => {
+                  const d = ultimo.per[a.id];
+                  const gg = d && d.hasVal ? r2(d.val - d.apAcum) : 0;
+                  return <RentCell key={"tr" + a.id} g={gg} r={d && d.apAcum > 0 ? (gg / d.apAcum) * 100 : 0}
+                    on={!!d?.hasVal && d.apAcum > 0} tint={tono(a)} sep={i === 0} bold />;
+                })}
+                <RentCell g={ultimo.tot.hasVal ? r2(ultimo.tot.val - ultimo.tot.apAcum) : 0}
+                  r={ultimo.tot.apAcum > 0 ? ((ultimo.tot.val - ultimo.tot.apAcum) / ultimo.tot.apAcum) * 100 : 0}
+                  on={ultimo.tot.hasVal} tint={P.ac} bold />
+                <td />
               </tr>
-            ))}
+            )}
             {!plan.length && <tr><td colSpan={3 * nCols + 2} style={{ color: P.t4 }}>Sin meses todavía. Pulsa "+ Mes".</td></tr>}
           </tbody></table></div>
 
           <div className="mob-card" style={{ padding: 12 }}>
-            {plan.map(f => (
-              <div key={f.month} className="mob-item" onClick={() => abrir(f)}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{fMN(f.month)}</div>
-                <div className="shdr">Aportación del mes · {fE(f.tot.ap)}</div>
-                {planAssets.filter(a => f.per[a.id]?.ap > 0).map(a => (
-                  <div key={a.id} className="mob-row">
-                    <span className="mob-lbl" style={{ color: tono(a) }}>{corto(a)} · {abrev(a.platform)}</span>
-                    <span style={{ fontFamily: "monospace", color: tono(a) }}>{fE(f.per[a.id].ap)}</span>
+            {anos.map(g => {
+              const ab = abierto(g.year);
+              return (
+                <Fragment key={g.year}>
+                  <div className="mob-item" onClick={() => plegar(g.year)}
+                    style={{ cursor: "pointer", background: P.seg, borderColor: ab ? P.ac + "40" : undefined }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontWeight: 800, fontSize: 14 }}>
+                        <span style={{ display: "inline-block", width: 13, color: ab ? P.ac : P.t3 }}>{ab ? "▼" : "▶"}</span>
+                        {g.year}
+                        <span style={{ fontWeight: 400, fontSize: 9, color: P.t4, marginLeft: 6 }}>{g.rango}</span>
+                      </span>
+                      <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{fE(g.tot.apAcum)}</span>
+                    </div>
+                    <div className="mob-row"><span className="mob-lbl">Aportado en {g.year}</span><span style={{ fontFamily: "monospace", color: P.ac }}>{fE(g.tot.ap)}</span></div>
+                    {g.tot.hasVal && <>
+                      <div className="mob-row"><span className="mob-lbl">Valor al cerrar</span><span style={{ fontFamily: "monospace" }}>{fE(g.tot.val)}</span></div>
+                      <div className="mob-row"><span className="mob-lbl">Ganancia del año</span><span style={{ fontFamily: "monospace", color: rc(g.tot.g) }}>{fE(g.tot.g)} ({fP(g.tot.pct)})</span></div>
+                    </>}
                   </div>
-                ))}
-                <div className="shdr">Acumulado y rentabilidad</div>
-                {planAssets.filter(a => f.per[a.id]?.apAcum > 0).map(a => (
-                  <div key={a.id} className="mob-row">
-                    <span className="mob-lbl" style={{ color: tono(a) }}>{corto(a)} · {abrev(a.platform)}</span>
-                    <span style={{ fontFamily: "monospace" }}>
-                      {fE(f.per[a.id].apAcum)}
-                      {f.per[a.id].hasVal && <span style={{ color: rc(f.per[a.id].g) }}> → {fE(f.per[a.id].val)} ({fP(f.per[a.id].pct)})</span>}
-                    </span>
-                  </div>
-                ))}
-                <div className="mob-row" style={{ borderTop: "1px solid " + P.l2, marginTop: 4, paddingTop: 6 }}>
-                  <span className="mob-lbl" style={{ color: P.ac, fontWeight: 700 }}>TOTAL</span>
-                  <span style={{ fontFamily: "monospace", fontWeight: 700 }}>
-                    {fE(f.tot.apAcum)}
-                    {f.tot.hasVal && <span style={{ color: rc(f.tot.g) }}> → {fE(f.tot.val)} ({fP(f.tot.pct)})</span>}
-                  </span>
-                </div>
-              </div>
-            ))}
+                  {ab && g.meses.map(f => (
+                    <div key={f.month} className="mob-item" onClick={() => abrir(f)} style={{ marginLeft: 14 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{fMN(f.month)}</div>
+                      <div className="shdr">Aportación del mes · {fE(f.tot.ap)}</div>
+                      {planAssets.filter(a => f.per[a.id]?.ap > 0).map(a => (
+                        <div key={a.id} className="mob-row">
+                          <span className="mob-lbl" style={{ color: tono(a) }}>{corto(a)} · {abrev(a.platform)}</span>
+                          <span style={{ fontFamily: "monospace", color: tono(a) }}>{fE(f.per[a.id].ap)}</span>
+                        </div>
+                      ))}
+                      <div className="shdr">Acumulado y rentabilidad</div>
+                      {planAssets.filter(a => f.per[a.id]?.apAcum > 0).map(a => (
+                        <div key={a.id} className="mob-row">
+                          <span className="mob-lbl" style={{ color: tono(a) }}>{corto(a)} · {abrev(a.platform)}</span>
+                          <span style={{ fontFamily: "monospace" }}>
+                            {fE(f.per[a.id].apAcum)}
+                            {f.per[a.id].hasVal && <span style={{ color: rc(f.per[a.id].g) }}> → {fE(f.per[a.id].val)} ({fP(f.per[a.id].pct)})</span>}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="mob-row" style={{ borderTop: "1px solid " + P.l2, marginTop: 4, paddingTop: 6 }}>
+                        <span className="mob-lbl" style={{ color: P.ac, fontWeight: 700 }}>TOTAL</span>
+                        <span style={{ fontFamily: "monospace", fontWeight: 700 }}>
+                          {fE(f.tot.apAcum)}
+                          {f.tot.hasVal && <span style={{ color: rc(f.tot.g) }}> → {fE(f.tot.val)} ({fP(f.tot.pct)})</span>}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </Fragment>
+              );
+            })}
+            {!anos.length && <p style={{ margin: 0, fontSize: 11, color: P.t4 }}>Sin meses todavía. Pulsa "+ Mes".</p>}
           </div>
         </div>}
 

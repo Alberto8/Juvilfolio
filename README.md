@@ -309,3 +309,59 @@ es el núcleo del plan y comparar los seis fondos juntos diluye la señal.
 La serie se recalcula sobre lo marcado — aportación del mes, acumulado y valor real salen de
 sumar solo esos fondos — así que el 3 % y el 9 % se comparan contra lo que de verdad se ha
 metido en ellos. La selección va en `localStorage` (`pt-comparativa-sel`).
+
+## Fondos Mensual: agrupada por año
+La tabla **arranca plegada**: una fila por año con sus totales, y los meses se abren a
+demanda. Se pueden tener **varios años abiertos a la vez** para comparar meses de años
+distintos, y el estado se guarda en `localStorage` (`pt-meses-abiertos`). Botón
+**Abrir años / Plegar años** para todo de golpe.
+
+Con doce meses la tabla se leía de un tirón; con cinco años serían sesenta filas y
+dieciocho columnas. Lo que se mira casi siempre es el resumen anual, así que ese pasa a ser
+la vista por defecto.
+
+Qué muestra la fila de año, en cada uno de los tres bloques:
+
+| Bloque | En la fila de año |
+|---|---|
+| Aportación Mensual | Lo aportado **en todo el año** a ese fondo |
+| Suma de aportaciones | El acumulado **al cierre** de ese año |
+| Rentabilidad | La ganancia **del tramo**: `valor fin − valor inicio − aportado del año` |
+
+Esa última es la clave y es la misma fórmula que usa Anualidades: si se comparase el valor
+final contra el acumulado total, el primer año se llevaría toda la ganancia de los
+anteriores. Y el % se mide sobre el capital empleado (`valor inicio + aportado del año`),
+no sobre el acumulado.
+
+Con la serie real de ago-25 a jul-26 sale así, y las aportaciones de los años cuadran con el
+acumulado final (1.460 + 3.484 = 4.944 €):
+
+| Año | Aportado | Acumulado | Valor | Ganancia del año |
+|---|---|---|---|---|
+| 2025 (ago–dic) | 1.460,00 | 1.460,00 | 1.505,06 | +45,06 (+3,09 %) |
+| 2026 (ene–jul) | 3.484,00 | 4.944,00 | 5.491,88 | +502,82 (+10,08 %) |
+
+La fila **TOTAL** del final solo aparece con más de un año, y compara el acumulado de toda
+la serie contra el valor de hoy.
+
+En móvil el año es una tarjeta plegable: se arranca con una tarjeta por año en lugar de una
+por mes, y los meses aparecen indentados al abrirlo.
+
+## Quién manda en `aportado`
+Hay dos sitios donde vive lo aportado y conviene saber cuál gana, porque un cuadre entre
+ambos puede parecer un error sin serlo:
+
+| | Manda | El otro sirve para |
+|---|---|---|
+| `plan_mensual = true` | `fund_contributions` | Nada. `assets.aportado` es un resto histórico que `enrichAssets` sustituye al cargar |
+| `plan_mensual = false` | `assets.aportado` | Atribuir la compra a su año en Anualidades |
+
+Por eso los fondos del plan salen descuadrados en cuanto anotas un mes nuevo: `assets`
+se queda con lo que hubiera y la app ya no lo lee. **No es un error y no afecta a nada.**
+Donde una diferencia sí importa es en los activos **fuera** del plan: ahí `assets.aportado`
+es lo que se muestra, y la fila de `fund_contributions` solo desplaza el reparto por años.
+
+`cuadrar-aportado.sql` saca el cuadre con una columna de veredicto que dice cuál es cuál, y
+trae un `UPDATE` opcional para poner `assets.aportado` al día en los del plan. No hace falta
+para que la app funcione; deja la base coherente si algún día consultas `assets` directamente
+o le quitas el flag a un activo.
